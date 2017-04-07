@@ -8,9 +8,13 @@ Created on Thu Mar 30 13:21:51 2017
 import datetime
 import numpy as np
 import pandas as pd
+
+#classifiers / regressors
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import ElasticNet
 from sklearn.linear_model import Lars
+from sklearn.svm import SVR
+
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
 from scipy import stats
@@ -24,10 +28,18 @@ elastic_parameters = {'l1_ratio':[i/3 for i in range(0,10)]}
 
 lars = Lars()
 
+rbf = SVR()
+rbf_parameters = {'C':[i/2+1 for i in range(3)]}
+
+lin_svm = SVR(kernel='linear')
+lin_svm_parameters = {'C':[i/2+1 for i in range(3)]}
+
 classifiers = {}
 classifiers['ridge'] = [ridge, ridge_parameters]
 classifiers['elastic'] = [elastic, elastic_parameters]
 classifiers['lars'] = [lars, None]
+classifiers['rbf'] = [rbf, rbf_parameters]
+classifiers['lin_svm'] = [lin_svm, lin_svm_parameters]
 
 def regress(rounds, classifiers, dnumber=1):
     
@@ -42,11 +54,11 @@ def regress(rounds, classifiers, dnumber=1):
     columns = [classifier+'_'+str(round) for classifier in classifiers_name for round in range(rounds)]
     
     cor_indices = ['spearman correlation', 'spearman pval', 'pearson correlation', 'pearson pval']
-    correlation = pd.DataFrame(index = cor_indices, columns=columns)
+    correlation = pd.DataFrame(index = cor_indices, columns=[])
     
     columns.append('true_val')
     
-    result = pd.DataFrame(index = map(str, cell_lines), columns=columns)
+    result = pd.DataFrame(index = map(str, cell_lines), columns=[])
     
     for a in drug_response['COSMIC_ID']:
         val = drug_response[drug_response['COSMIC_ID']==a]['LN_IC50'].values[0]
@@ -156,9 +168,11 @@ def regress(rounds, classifiers, dnumber=1):
 #result.to_csv('gdsc/results2.csv')
 
 start = datetime.datetime.now()
-result, correlation = regress(1, classifiers, 1)
+result, correlation = regress(20, classifiers, 1)
+result.to_csv('gdsc/v2/result.csv')
+correlation.to_csv('gdsc/v2/correlation.csv')
 end = datetime.datetime.now()
 
 time_taken = str(end-start)
-with open('gdsc/time_taken.txt') as f:
+with open('gdsc/v2/time_taken.txt', 'w') as f:
     f.write(time_taken)
