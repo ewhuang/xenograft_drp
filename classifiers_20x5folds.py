@@ -5,6 +5,7 @@ Created on Thu Mar 30 13:21:51 2017
 @author: limjing7
 """
 
+import datetime
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
@@ -28,15 +29,15 @@ classifiers['ridge'] = [ridge, ridge_parameters]
 classifiers['elastic'] = [elastic, elastic_parameters]
 classifiers['lars'] = [lars, None]
 
-def regress(rounds, classifiers):
+def regress(rounds, classifiers, dnumber=1):
     
     gene_exp = pd.read_csv("gdsc/permutation_"+str(0)+".csv", index_col=0)
-    drug_response = pd.read_excel("gdsc/v17_fitted_dose_response.xlsx")
-    d1_response = drug_response[drug_response['DRUG_ID']==1]
-    #rmv drug_response data that uses cell-lines that do not have exp data
-    d1_response = d1_response.loc[[str(i) in gene_exp for i in d1_response['COSMIC_ID']]]
+    drugs_response = pd.read_excel("gdsc/v17_fitted_dose_response.xlsx")
+    drug_response = drugs_response[drugs_response['DRUG_ID']==dnumber]
+    #rmv drugs_response data that uses cell-lines that do not have exp data
+    drug_response = drug_response.loc[[str(i) in gene_exp for i in drug_response['COSMIC_ID']]]
     
-    cell_lines = d1_response['COSMIC_ID']
+    cell_lines = drug_response['COSMIC_ID']
     classifiers_name = ['ridge', 'elastic', 'lars']
     columns = [classifier+'_'+str(round) for classifier in classifiers_name for round in range(rounds)]
     
@@ -47,8 +48,8 @@ def regress(rounds, classifiers):
     
     result = pd.DataFrame(index = map(str, cell_lines), columns=columns)
     
-    for a in d1_response['COSMIC_ID']:
-        val = d1_response[d1_response['COSMIC_ID']==a]['LN_IC50'].values[0]
+    for a in drug_response['COSMIC_ID']:
+        val = drug_response[drug_response['COSMIC_ID']==a]['LN_IC50'].values[0]
         result.loc[str(a), 'true_val'] = val
     
     for round in range(rounds):
@@ -57,7 +58,7 @@ def regress(rounds, classifiers):
         to_rmv = []
         for cell_line in gene_exp:
             try: 
-                if len(d1_response[d1_response['COSMIC_ID']==int(cell_line)])==0:
+                if len(drug_response[drug_response['COSMIC_ID']==int(cell_line)])==0:
                     to_rmv.append(cell_line)
             except ValueError:
                 to_rmv.append(cell_line)
@@ -83,7 +84,7 @@ def regress(rounds, classifiers):
             
             n_train_y = []
             for example in ntrain:
-                d_resp = d1_response[d1_response['COSMIC_ID']==int(example)].loc[:,'LN_IC50']
+                d_resp = drug_response[drug_response['COSMIC_ID']==int(example)].loc[:,'LN_IC50']
                 n_train_y.append(d_resp.values[0])
             ntrain_t = np.transpose(ntrain)
             
@@ -93,7 +94,7 @@ def regress(rounds, classifiers):
             
             n_test_y = []
             for example in ntest:
-                d_resp = d1_response[d1_response['COSMIC_ID']==int(example)].loc[:,'LN_IC50']
+                d_resp = drug_response[drug_response['COSMIC_ID']==int(example)].loc[:,'LN_IC50']
                 n_test_y.append(d_resp.values[0])
             ntest_t = np.transpose(ntest)
             
@@ -154,4 +155,10 @@ def regress(rounds, classifiers):
     return result, correlation
 #result.to_csv('gdsc/results2.csv')
 
-result, correlation = regress(1, classifiers)
+start = datetime.datetime.now()
+result, correlation = regress(1, classifiers, 1)
+end = datetime.datetime.now()
+
+time_taken = str(end-start)
+with open('gdsc/time_taken.txt') as f:
+    f.write(time_taken)
