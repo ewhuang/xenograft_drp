@@ -15,6 +15,7 @@ from sklearn.linear_model import ElasticNet
 from sklearn.linear_model import Lars
 from sklearn.linear_model import Lasso
 from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
 
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
@@ -22,13 +23,13 @@ from scipy import stats
 
 
 ridge = Ridge(copy_X=True)
-ridge_parameters = {'alpha':[i for i in range(11, 20)]}
+ridge_parameters = {'alpha':[i for i in range(185, 195, 1)]}
 
 lasso = Lasso(copy_X=True)
 lasso_parameters = {'alpha':[i/20 for i in range(3,15)]}
 
-elastic = ElasticNet()
-elastic_parameters = {'l1_ratio':[i/20 for i in range(3, 15)]}
+elastic = ElasticNet(l1_ratio=0.15)
+elastic_parameters = {'alpha':[i/10 for i in range(8, 15)]}
 
 lars = Lars()
 
@@ -36,7 +37,9 @@ rbf = SVR()
 rbf_parameters = {'C':[i/2+0.5 for i in range(4)]}
 
 lin_svm = SVR(kernel='linear')
-lin_svm_parameters = {'C':[i/2+0.5 for i in range(2, 5)]}
+lin_svm_parameters = {'C':[i/2+0.5 for i in range(2, 4)]}
+
+rand_for = RandomForestRegressor(min_samples_split=0.05, max_depth=5)
 
 classifiers = {}
 classifiers['ridge'] = [ridge, ridge_parameters]
@@ -45,6 +48,7 @@ classifiers['elastic'] = [elastic, elastic_parameters]
 classifiers['lars'] = [lars, None]
 classifiers['rbf'] = [rbf, rbf_parameters]
 classifiers['lin_svm'] = [lin_svm, lin_svm_parameters]
+classifiers['rand_for'] = [rand_for, None]
 
 def regress(rounds, classifiers, dnumber=1):
     
@@ -71,6 +75,7 @@ def regress(rounds, classifiers, dnumber=1):
         result.loc[str(a), 'true_val'] = val
     
     for round in range(rounds):
+        print("Round: "+str(round))
         gene_exp = pd.read_csv("gdsc/permutation_"+str(round)+".csv", index_col=0)
         
         to_rmv = []
@@ -118,8 +123,10 @@ def regress(rounds, classifiers, dnumber=1):
             
             for c_name, c_vals in classifiers.items():
                 if (c_vals[1] is not None):
+#                    print('starting')
                     classifier = GridSearchCV(c_vals[0], param_grid=c_vals[1])
                     classifier.fit(ntrain_t, y=n_train_y)
+#                    print('stopping')
                     
                     estimator = classifier.best_estimator_
                     best.append(estimator)
@@ -186,8 +193,8 @@ def reg_average(corr, classifiers, rounds):
 
 
 start = datetime.datetime.now()
-result, corr, best = regress(2, classifiers, 1)
-correlation = reg_average(corr, classifiers, 2)
+result, corr, best = regress(20, classifiers, 1)
+correlation = reg_average(corr, classifiers, 20)
 result.to_csv('gdsc/v3/result.csv')
 corr.to_csv('gdsc/v3/corr.csv')
 correlation.to_csv('gdsc/v3/correlation.csv')
