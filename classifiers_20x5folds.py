@@ -13,6 +13,7 @@ import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import ElasticNet
 from sklearn.linear_model import Lars
+from sklearn.linear_model import Lasso
 from sklearn.svm import SVR
 
 from sklearn.model_selection import GridSearchCV
@@ -21,21 +22,25 @@ from scipy import stats
 
 
 ridge = Ridge(copy_X=True)
-ridge_parameters = {'alpha':[i/3 for i in range(10)]}
+ridge_parameters = {'alpha':[i for i in range(11, 20)]}
+
+lasso = Lasso(copy_X=True)
+lasso_parameters = {'alpha':[i/20 for i in range(3,15)]}
 
 elastic = ElasticNet()
-elastic_parameters = {'l1_ratio':[i/3 for i in range(0,10)]}
+elastic_parameters = {'l1_ratio':[i/20 for i in range(3, 15)]}
 
 lars = Lars()
 
 rbf = SVR()
-rbf_parameters = {'C':[i/2+1 for i in range(3)]}
+rbf_parameters = {'C':[i/2+0.5 for i in range(4)]}
 
 lin_svm = SVR(kernel='linear')
-lin_svm_parameters = {'C':[i/2+1 for i in range(3)]}
+lin_svm_parameters = {'C':[i/2+0.5 for i in range(2, 5)]}
 
 classifiers = {}
 classifiers['ridge'] = [ridge, ridge_parameters]
+classifiers['lasso'] = [lasso, lasso_parameters]
 classifiers['elastic'] = [elastic, elastic_parameters]
 classifiers['lars'] = [lars, None]
 classifiers['rbf'] = [rbf, rbf_parameters]
@@ -59,6 +64,7 @@ def regress(rounds, classifiers, dnumber=1):
     columns.append('true_val')
     
     result = pd.DataFrame(index = map(str, cell_lines), columns=[])
+    best = []
     
     for a in drug_response['COSMIC_ID']:
         val = drug_response[drug_response['COSMIC_ID']==a]['LN_IC50'].values[0]
@@ -80,7 +86,7 @@ def regress(rounds, classifiers, dnumber=1):
         g_useful = g_useful.apply(stats.zscore, axis=1)
             
         
-        g_wolab = gene_exp.iloc[:, 1:]
+        #g_wolab = gene_exp.iloc[:, 1:]
         g_t = np.transpose(g_useful)
         
         kf = KFold(n_splits=5)
@@ -116,6 +122,7 @@ def regress(rounds, classifiers, dnumber=1):
                     classifier.fit(ntrain_t, y=n_train_y)
                     
                     estimator = classifier.best_estimator_
+                    best.append(estimator)
                     preds = estimator.predict(ntest_t)
                     for index, cell_line in enumerate(ntest):
                         try:
@@ -164,15 +171,30 @@ def regress(rounds, classifiers, dnumber=1):
     #            except KeyError:
     #                pass
     #    break
-    return result, correlation
+    return result, correlation, best
 #result.to_csv('gdsc/results2.csv')
 
+def reg_average(corr, classifiers, rounds):
+    cols = [c_name for c_name in classifiers]
+    cor_indices = ['spearman correlation', 'spearman pval', 'pearson correlation', 'pearson pval']
+    tot_corr = pd.DataFrame(index = cor_indices, columns=cols, data=0)
+    for c_name in classifiers:
+        for round in range(rounds):
+            tot_corr[c_name] += corr[c_name+'_'+str(round)]
+    tot_corr /= rounds
+    return tot_corr
+
+
 start = datetime.datetime.now()
-result, correlation = regress(20, classifiers, 1)
-result.to_csv('gdsc/v2/result.csv')
-correlation.to_csv('gdsc/v2/correlation.csv')
+result, corr, best = regress(2, classifiers, 1)
+correlation = reg_average(corr, classifiers, 2)
+result.to_csv('gdsc/v3/result.csv')
+corr.to_csv('gdsc/v3/corr.csv')
+correlation.to_csv('gdsc/v3/correlation.csv')
 end = datetime.datetime.now()
 
 time_taken = str(end-start)
-with open('gdsc/v2/time_taken.txt', 'w') as f:
+with open('gdsc/v3/time_taken.txt', 'w') as f:
     f.write(time_taken)
+    
+print(best)
