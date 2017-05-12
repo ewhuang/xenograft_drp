@@ -5,52 +5,31 @@ Created on Thu Mar 30 13:21:51 2017
 @author: limjing7
 """
 
+import argparse
 import datetime
 import numpy as np
 import pandas as pd
 
-#classifiers / regressors
-from sklearn.linear_model import Ridge
-from sklearn.linear_model import ElasticNet
-from sklearn.linear_model import Lars
-from sklearn.linear_model import Lasso
-from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor
+import classifiersTemp
 
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
 from scipy import stats
 
-
-ridge = Ridge(copy_X=True)
-ridge_parameters = {'alpha':[i for i in range(185, 195, 1)]}
-
-lasso = Lasso(copy_X=True)
-lasso_parameters = {'alpha':[i/20 for i in range(3,15)]}
-
-elastic = ElasticNet(l1_ratio=0.15)
-elastic_parameters = {'alpha':[i/10 for i in range(8, 15)]}
-
-lars = Lars()
-
-rbf = SVR()
-rbf_parameters = {'C':[i/2+0.5 for i in range(4)]}
-
-lin_svm = SVR(kernel='linear')
-lin_svm_parameters = {'C':[i/2+0.5 for i in range(2, 4)]}
-
-rand_for = RandomForestRegressor(min_samples_split=0.05, max_depth=5)
-
-classifiers = {}
-classifiers['ridge'] = [ridge, ridge_parameters]
-classifiers['lasso'] = [lasso, lasso_parameters]
-classifiers['elastic'] = [elastic, elastic_parameters]
-classifiers['lars'] = [lars, None]
-classifiers['rbf'] = [rbf, rbf_parameters]
-classifiers['lin_svm'] = [lin_svm, lin_svm_parameters]
-classifiers['rand_for'] = [rand_for, None]
-
 def regress(rounds, classifiers, dnumber=1):
+    """Performs regression with 5-fold cross_validation
+       
+    
+    Parameters
+    ----------
+    rounds: number of rounds of repeats done
+    classifiers: dictionary of classifiers used
+        - key: name to for classifier identification
+        - value: list of 2 values: [classifier, dictionary of hyperparameters]
+    dnumber: drug number in gdsc dataset
+    
+    """
+    
     
     gene_exp = pd.read_csv("gdsc/permutation_"+str(0)+".csv", index_col=0)
     drugs_response = pd.read_excel("gdsc/v17_fitted_dose_response.xlsx")
@@ -156,34 +135,22 @@ def regress(rounds, classifiers, dnumber=1):
             correlation.loc['spearman pval', c_name+'_'+str(round)] = s_pval
             correlation.loc['pearson correlation', c_name+'_'+str(round)] = p_corr
             correlation.loc['pearson pval', c_name+'_'+str(round)] = p_pval
-    #            
-    #        classifier2 = GridSearchCV(elastic, param_grid=elastic_parameters)
-    #        classifier2.fit(ntrain_t, y=n_train_y)
-    #        
-    #        estimator = classifier2.best_estimator_
-    #        preds = estimator.predict(ntest_t)
-    #        print(ntest.columns)
-    #        for index, cell_line in enumerate(ntest):
-    #            try:
-    #                result.loc[cell_line, 'elastic_'+str(round)] = preds[index]
-    #            except KeyError:
-    #                pass
-    #            
-    #        lars.fit(ntrain_t, y=n_train_y)
-    #        preds = lars.predict(ntest_t)
-    #        print(ntest.columns)
-    #        for index, cell_line in enumerate(ntest):
-    #            try:
-    #                result.loc[cell_line, 'lars_'+str(round)] = preds[index]
-    #            except KeyError:
-    #                pass
-    #    break
+            
     return result, correlation, best
 #result.to_csv('gdsc/results2.csv')
 
 def reg_average(corr, classifiers, rounds):
+    """Calculates the average 
+    
+    Parameters
+    ----------
+    corr : dataframe containing correlation data in columns
+    classifiers: dictionary of classifiers used
+    rounds: number of rounds of repeats done
+    """
+    
     cols = [c_name for c_name in classifiers]
-    cor_indices = ['spearman correlation', 'spearman pval', 'pearson correlation', 'pearson pval']
+    cor_indices = corr.index
     tot_corr = pd.DataFrame(index = cor_indices, columns=cols, data=0)
     for c_name in classifiers:
         for round in range(rounds):
@@ -191,17 +158,36 @@ def reg_average(corr, classifiers, rounds):
     tot_corr /= rounds
     return tot_corr
 
+def main():
+    parser = argparse.ArgumentParser(description='perform cv regression')
+    parser.add_argument('-d', '--dnum', help='drug number to regress on',
+                        default = 1, metavar='' , type = int)
+    parser.add_argument('-r', '--rounds', help='number of rounds to repeat',
+                        default = 20, metavar='', type = int)
+    parser.add_argument('-f', '--fname', help='file containing classifiers',
+                        metavar='')
+    args = parser.parse_args()
+    dnum = args.dnum
+    rounds = args.rounds
+    print(dnum)
 
-start = datetime.datetime.now()
-result, corr, best = regress(20, classifiers, 1)
-correlation = reg_average(corr, classifiers, 20)
-result.to_csv('gdsc/v3/result.csv')
-corr.to_csv('gdsc/v3/corr.csv')
-correlation.to_csv('gdsc/v3/correlation.csv')
-end = datetime.datetime.now()
+#    classifiers = classifiersTemp.create_classifiers()
+#
+#    start = datetime.datetime.now()
+#    result, corr, best = regress(roundsc, classifiers, dnum)
+#    correlation = reg_average(corr, classifiers, 20)
+#    result.to_csv('gdsc/v3/result.csv')
+#    corr.to_csv('gdsc/v3/corr.csv')
+#    correlation.to_csv('gdsc/v3/correlation.csv')
+#    end = datetime.datetime.now()
+#    
+#    time_taken = str(end-start)
+#    with open('gdsc/v3/time_taken.txt', 'w') as f:
+#        f.write(time_taken)
+#        
+#    print(best)
 
-time_taken = str(end-start)
-with open('gdsc/v3/time_taken.txt', 'w') as f:
-    f.write(time_taken)
+if __name__ == "__main__":
+    main()
     
-print(best)
+
