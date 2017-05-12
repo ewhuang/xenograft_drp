@@ -1,0 +1,68 @@
+{
+  "ridge": {
+    "args": {
+      "copy_X": true
+    },
+    "cv": {
+      "alpha": {
+        "divider": 1,
+        "offset": 0,
+        "start": 185,
+        "stop": 195,
+        "step": 1
+      }
+    }
+  },
+  "lasso": {
+    "args":{},
+    "cv": {
+      "alpha": {
+        "divider": 20,
+        "start": 3,
+        "stop": 15
+      }
+    }
+  },
+  "elastic": {
+    "args":{
+      "l1_ratio": 0.15
+    },
+    "cv": {
+      "alpha": {
+        "dividier": 10,
+        "start": 8,
+        "stop": 15
+      }
+    }
+  },
+  "lars": {},
+  "rbf": {
+    "args": {},
+    "cv": {
+      "C": {
+        "dividier": 2,
+        "offset": 0.5,
+        "stop": 4
+      }
+    }
+  },
+  "lin_svm": {
+    "args": {
+      "kernel": "linear"
+    },
+    "cv": {
+      "C": {
+        "dividier": 2,
+        "offset": 0.5,
+        "start": 2,
+        "stop": 4
+      }
+    }
+  },
+  "rand_for": {
+    "args": {
+      "min_samples_split": 0.05,
+      "max_depth": 5
+    }
+  }
+}

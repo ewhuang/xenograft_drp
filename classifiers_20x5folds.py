@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Mar 30 13:21:51 2017
+Performs regression with different classifiers
+and calculates correlation coefficients
 
 @author: limjing7
 """
@@ -10,7 +11,7 @@ import datetime
 import numpy as np
 import pandas as pd
 
-import classifiersTemp
+import createClassifiers
 
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import KFold
@@ -171,7 +172,7 @@ def main():
     rounds = args.rounds
     print(dnum)
 
-#    classifiers = classifiersTemp.create_classifiers()
+#    classifiers = createClassifiers.create_classifiers()
 #
 #    start = datetime.datetime.now()
 #    result, corr, best = regress(roundsc, classifiers, dnum)
