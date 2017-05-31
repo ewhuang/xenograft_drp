@@ -40,7 +40,7 @@
     "args": {},
     "cv": {
       "C": {
-        "dividier": 2,
+        "divider": 2,
         "offset": 0.5,
         "stop": 4
       }
@@ -52,10 +52,13 @@
     },
     "cv": {
       "C": {
-        "dividier": 2,
-        "offset": 0.5,
-        "start": 2,
-        "stop": 4
+        "offset": 5,
+        "stop": 3
+      },
+      "gamma": {
+        "dividier": 50000,
+        "offset": 0.00005,
+        "stop": 3
       }
     }
   },

@@ -127,7 +127,7 @@ def regress(rounds, classifiers, dnumber=1):
                             pass
         for c_name in classifiers:
             c_pred_shape = result.loc[:, c_name+'_'+str(round)].shape[0]
-            curr_preds = result.loc[:, c_name+'_'+str(round)].reshape(c_pred_shape)
+            curr_preds = result.loc[:, c_name+'_'+str(round)].values.reshape(c_pred_shape)
             
             s_corr, s_pval = stats.spearmanr(curr_preds, true_values)
             p_corr, p_pval = stats.pearsonr(curr_preds, true_values)
@@ -170,13 +170,14 @@ def main():
     args = parser.parse_args()
     dnum = args.dnum
     rounds = args.rounds
+    fname = args.fname
     print(dnum)
 
-#    classifiers = createClassifiers.create_classifiers()
-#
-#    start = datetime.datetime.now()
-#    result, corr, best = regress(roundsc, classifiers, dnum)
-#    correlation = reg_average(corr, classifiers, 20)
+    classifiers = createClassifiers.create_classifiers(fname)
+
+    start = datetime.datetime.now()
+    result, corr, best = regress(rounds, classifiers, dnum)
+    correlation = reg_average(corr, classifiers, 20)
 #    result.to_csv('gdsc/v3/result.csv')
 #    corr.to_csv('gdsc/v3/corr.csv')
 #    correlation.to_csv('gdsc/v3/correlation.csv')
