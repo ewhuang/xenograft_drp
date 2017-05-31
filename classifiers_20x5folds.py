@@ -10,6 +10,7 @@ import argparse
 import datetime
 import json
 import numpy as np
+import os
 import pandas as pd
 
 import createClassifiers
@@ -32,7 +33,6 @@ def regress(rounds, classifiers, dnumber=1):
     
     """
     
-    
     gene_exp = pd.read_csv("gdsc/permutation_"+str(0)+".csv", index_col=0)
     drugs_response = pd.read_excel("gdsc/v17_fitted_dose_response.xlsx")
     drug_response = drugs_response[drugs_response['DRUG_ID']==dnumber]
@@ -40,13 +40,9 @@ def regress(rounds, classifiers, dnumber=1):
     drug_response = drug_response.loc[[str(i) in gene_exp for i in drug_response['COSMIC_ID']]]
     
     cell_lines = drug_response['COSMIC_ID']
-    classifiers_name = ['ridge', 'elastic', 'lars']
-    columns = [classifier+'_'+str(round) for classifier in classifiers_name for round in range(rounds)]
     
     cor_indices = ['spearman correlation', 'spearman pval', 'pearson correlation', 'pearson pval']
     correlation = pd.DataFrame(index = cor_indices, columns=[])
-    
-    columns.append('true_val')
     
     result = pd.DataFrame(index = map(str, cell_lines), columns=[])
     best = {}
@@ -71,8 +67,6 @@ def regress(rounds, classifiers, dnumber=1):
         g_useful = gene_exp.loc[:,~mask]
         g_useful = g_useful.apply(stats.zscore, axis=1)
             
-        
-        #g_wolab = gene_exp.iloc[:, 1:]
         g_t = np.transpose(g_useful)
         
         kf = KFold(n_splits=5)
@@ -134,6 +128,7 @@ def regress(rounds, classifiers, dnumber=1):
                             result.loc[cell_line, c_name+'_'+str(round)] = preds[index]
                         except KeyError:
                             pass
+        # calculate correlations
         for c_name in classifiers:
             c_pred_shape = result.loc[:, c_name+'_'+str(round)].shape[0]
             curr_preds = result.loc[:, c_name+'_'+str(round)].values.reshape(c_pred_shape)
@@ -183,6 +178,7 @@ def main():
     rounds = args.rounds
     fname = args.fname
     output_folder = args.output
+    os.makedirs(output_folder, exist_ok = True)
     print(dnum)
 
     classifiers = createClassifiers.create_classifiers(fname)
@@ -194,15 +190,13 @@ def main():
     corr.to_csv(output_folder+'/corr.csv')
     correlation.to_csv(output_folder+'/correlation.csv')
     with open(output_folder+'/best.json', 'w') as f:
-       json.dump(best, f)
+       json.dump(best, f, indent=2)
     end = datetime.datetime.now()
     
     time_taken = str(end-start)
     with open(output_folder+'/time_taken.txt', 'w') as f:
         f.write(time_taken)
-#        
-#    print(best)
-
+        
 if __name__ == "__main__":
     main()
     
