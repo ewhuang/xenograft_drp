@@ -8,6 +8,7 @@ and calculates correlation coefficients
 
 import argparse
 import datetime
+import json
 import numpy as np
 import pandas as pd
 
@@ -48,7 +49,7 @@ def regress(rounds, classifiers, dnumber=1):
     columns.append('true_val')
     
     result = pd.DataFrame(index = map(str, cell_lines), columns=[])
-    best = []
+    best = {}
     
     for a in drug_response['COSMIC_ID']:
         val = drug_response[drug_response['COSMIC_ID']==a]['LN_IC50'].values[0]
@@ -108,9 +109,17 @@ def regress(rounds, classifiers, dnumber=1):
                     classifier.fit(ntrain_t, y=n_train_y)
 #                    print('stopping')
                     
+                    #record best metaparameters selected
                     estimator = classifier.best_estimator_
-                    best.append(estimator)
+                    if c_name not in best:
+                        best[c_name] = []
+                    params_dict = {}
+                    for param in c_vals[1]:
+                        params_dict[param] = getattr(estimator, param)
+                    best[c_name].append(params_dict)
+                    
                     preds = estimator.predict(ntest_t)
+                    
                     for index, cell_line in enumerate(ntest):
                         try:
                             result.loc[cell_line, c_name+'_'+str(round)] = preds[index]
@@ -162,30 +171,35 @@ def reg_average(corr, classifiers, rounds):
 def main():
     parser = argparse.ArgumentParser(description='perform cv regression')
     parser.add_argument('-d', '--dnum', help='drug number to regress on',
-                        default = 1, metavar='' , type = int)
+                        default = 1, metavar = '' , type = int)
     parser.add_argument('-r', '--rounds', help='number of rounds to repeat',
-                        default = 20, metavar='', type = int)
-    parser.add_argument('-f', '--fname', help='file containing classifiers',
-                        metavar='')
+                        default = 20, metavar = '', type = int)
+    parser.add_argument('-f', '--fname', help = 'file containing classifiers',
+                        metavar = '')
+    parser.add_argument('-o', '--output', help = 'output folder',
+                        metavar = '')
     args = parser.parse_args()
     dnum = args.dnum
     rounds = args.rounds
     fname = args.fname
+    output_folder = args.output
     print(dnum)
 
     classifiers = createClassifiers.create_classifiers(fname)
 
     start = datetime.datetime.now()
     result, corr, best = regress(rounds, classifiers, dnum)
-    correlation = reg_average(corr, classifiers, 20)
-#    result.to_csv('gdsc/v3/result.csv')
-#    corr.to_csv('gdsc/v3/corr.csv')
-#    correlation.to_csv('gdsc/v3/correlation.csv')
-#    end = datetime.datetime.now()
-#    
-#    time_taken = str(end-start)
-#    with open('gdsc/v3/time_taken.txt', 'w') as f:
-#        f.write(time_taken)
+    correlation = reg_average(corr, classifiers, rounds)
+    result.to_csv(output_folder+'/result.csv')
+    corr.to_csv(output_folder+'/corr.csv')
+    correlation.to_csv(output_folder+'/correlation.csv')
+    with open(output_folder+'/best.json', 'w') as f:
+       json.dump(best, f)
+    end = datetime.datetime.now()
+    
+    time_taken = str(end-start)
+    with open(output_folder+'/time_taken.txt', 'w') as f:
+        f.write(time_taken)
 #        
 #    print(best)
 

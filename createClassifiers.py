@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu May 11 22:19:53 2017
+Reads a json file to create a dictionary of classifiers
+with parameters to do gridsearch
 
 @author: limjing7
 """
@@ -16,6 +17,10 @@ from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor
 
 def fill_in(items):
+    """
+    create default values for each classifier
+    """
+    
     i2 = items.copy()
     for item in i2:
         try:
@@ -46,6 +51,10 @@ def fill_in(items):
     return items
 
 def get_params(cv_dict):
+    """
+    create a dictionary mapping metaparameters to list of values to try
+    """
+    
     params = {}
     for param, v in cv_dict.items():
         params[param] = [i/v['divider']+v['offset']
