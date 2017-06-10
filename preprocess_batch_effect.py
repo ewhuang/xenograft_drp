@@ -138,47 +138,50 @@ def write_drug_matrices():
     drugs_in_common = list(set(gdsc_drug_to_sample_dct.keys()).intersection(
         tcga_drug_to_sample_dct.keys()))
 
-    out = open('./data/min_max_values.tsv', 'w')
-    out.write('\tTCGA max\tTCGA min\tGDSC max\tGDSC min\n')
-    for curr_drug in drugs_in_common:
-    # for curr_drug in ['cisplatin']:
-        print curr_drug
-        tcga_drug_samples = tcga_drug_to_sample_dct[curr_drug]
+    # out = open('./data/min_max_values.tsv', 'w')
+    # out.write('\tTCGA max\tTCGA min\tGDSC max\tGDSC min\n')
+    # for curr_drug in drugs_in_common:
+    #     print curr_drug
+    #     tcga_drug_samples = tcga_drug_to_sample_dct[curr_drug]
 
-        tcga_table = pd.DataFrame()
-        # Get the TCGA gene expression dataframe.
-        for subfolder in listdir_fullpath('%s/RNAseq' % tcga_folder):
-            for fname in listdir_fullpath(subfolder):
-                if 'FPKM' not in fname:
-                    continue
-                tcga_table = read_tcga_gene_expr(fname, tcga_drug_samples, tcga_table)               
-        # Log 2 transform.
-        tcga_table = tcga_table.add(0.1)
-        tcga_table = np.log2(tcga_table)
+    #     tcga_table = pd.DataFrame()
+    #     # Get the TCGA gene expression dataframe.
+    #     for subfolder in listdir_fullpath('%s/RNAseq' % tcga_folder):
+    #         for fname in listdir_fullpath(subfolder):
+    #             if 'FPKM' not in fname:
+    #                 continue
+    #             tcga_table = read_tcga_gene_expr(fname, tcga_drug_samples, tcga_table)               
+    #     # Log 2 transform.
+    #     tcga_table = tcga_table.add(0.1)
+    #     tcga_table = np.log2(tcga_table)
 
-        # Get the GDSC gene expression dataframe.
-        gdsc_drug_samples = gdsc_drug_to_sample_dct[curr_drug]
-        gdsc_table = read_gdsc_gene_expr(gdsc_drug_samples)
-        # Concatenate the TCGA and GDSC tables.
-        gene_expr_table = pd.concat([tcga_table, gdsc_table], axis=1)
-        # Replace NaNs with 0s.
-        # gene_expr_table = gene_expr_table.fillna(value=0) # TODO: currently filling.
-        gene_expr_table = gene_expr_table.dropna(axis=0, how='any')
-        # Drop rows with low standard deviation.
-        gene_expr_table = gene_expr_table[gene_expr_table.std(axis=1)>0.1]
-        # Get min/max values.
-        tcga_cols = [x for x in gene_expr_table.columns if '.txt' in x]
-        tcga_vals = gene_expr_table[tcga_cols].values
-        out.write('%s\t%s\t%s\t' % (curr_drug, tcga_vals.max(), tcga_vals.min()))
-        gdsc_cols = [x for x in gene_expr_table.columns if '.txt' not in x]
-        gdsc_vals = gene_expr_table[gdsc_cols].values
-        out.write('%s\t%s\n' % (gdsc_vals.max(), gdsc_vals.min()))
-        # Write the full table out to file.
-        gene_expr_table.to_csv('./data/%s_gene_expr_before_combat.csv' % curr_drug)
-    out.close()
+    #     # Get the GDSC gene expression dataframe.
+    #     gdsc_drug_samples = gdsc_drug_to_sample_dct[curr_drug]
+    #     gdsc_table = read_gdsc_gene_expr(gdsc_drug_samples)
+    #     # Concatenate the TCGA and GDSC tables.
+    #     gene_expr_table = pd.concat([tcga_table, gdsc_table], axis=1)
+    #     # Replace NaNs with 0s.
+    #     # gene_expr_table = gene_expr_table.fillna(value=0) # TODO: currently filling.
+    #     gene_expr_table = gene_expr_table.dropna(axis=0, how='any')
+    #     # Drop rows with low standard deviation.
+    #     gene_expr_table = gene_expr_table[gene_expr_table.std(axis=1)>0.1]
+    #     # Get min/max values.
+    #     tcga_cols = [x for x in gene_expr_table.columns if '.txt' in x]
+    #     tcga_vals = gene_expr_table[tcga_cols].values
+    #     out.write('%s\t%s\t%s\t' % (curr_drug, tcga_vals.max(), tcga_vals.min()))
+    #     gdsc_cols = [x for x in gene_expr_table.columns if '.txt' not in x]
+    #     gdsc_vals = gene_expr_table[gdsc_cols].values
+    #     out.write('%s\t%s\n' % (gdsc_vals.max(), gdsc_vals.min()))
+    #     # Write the full table out to file.
+    #     gene_expr_table.to_csv('./data/%s_gene_expr_before_combat.csv' % curr_drug)
+    # out.close()
     return drugs_in_common
 
-def write_pheno_file(drug, header):
+def write_pheno_file(drug):
+    f = open('./data/%s_gene_expr_before_combat.csv' % drug, 'r')
+    it = reader(f)
+    header = it.next()[1:]
+
     out = open('./data/%s_pheno.txt' % drug, 'w')
     out.write('\tsample\tbatch\n')
     for i, sample in enumerate(header):
@@ -195,7 +198,6 @@ def plot_stitched_gene_expr(drug, when):
     f = open('./data/%s_gene_expr_%s_combat.csv' % (drug, when), 'r')
     it = reader(f)
     header = it.next()[1:]
-    write_pheno_file(drug, header)
     colors = ['black' if '.txt' in sample else 'white' for sample in header]
     for line in it:
         # Skip lines that are all NAs.
@@ -230,6 +232,9 @@ def main():
     generate_directories()
 
     drugs_in_common = write_drug_matrices()
+
+    for drug in drugs_in_common:
+        write_pheno_file(drug)
 
     command = ('Rscript combat_batch_script.R %s' % ' '.join(drugs_in_common))
     print command
