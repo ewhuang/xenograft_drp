@@ -242,7 +242,8 @@ def read_xeno_gene_expr():
     xeno_table.dropna(axis=0, how='any', inplace=True)
     return xeno_table
 
-def read_gene_network(gene_df, gene_list, fname):
+# def read_gene_network(gene_df, gene_list, fname):
+def read_gene_network(gene_net, gene_list, fname):
     '''
     Reads the gene-to-gene network, and converts it into a numpy matrix, where
     an entry from i to j means that there was an entry i\tj in the network.
@@ -261,13 +262,13 @@ def read_gene_network(gene_df, gene_list, fname):
             if gene_i not in gene_list:
                 continue
             # Get index of gene in the gene list.
-            # gene_i_idx = gene_list.index(gene_i)
+            gene_i_idx = gene_list.index(gene_i)
             for gene_j in gene_j_set:
                 if gene_j not in gene_list:
                     continue
-                # gene_j_idx = gene_list.index(gene_j)
-                # gene_df[gene_i_idx, gene_j_idx] = 1
-                gene_df.set_value(gene_i, gene_j, 1)
+                gene_j_idx = gene_list.index(gene_j)
+                gene_net[gene_i_idx, gene_j_idx] = 1
+                # gene_df.set_value(gene_i, gene_j, 1)
     f.close()
 
 def compute_essential(c2g,net):
@@ -328,16 +329,17 @@ def main():
     print ge_table.shape, dr_table.shape
 
     if args.method == 'essentiality':
-        # num_genes = len(ge_gene_list)
-        # gene_net = np.zeros([num_genes, num_genes])
-        gene_df = pd.DataFrame([], index=ge_gene_list, columns=ge_gene_list)
+        num_genes = len(ge_gene_list)
+        gene_net = np.zeros([num_genes, num_genes])
+        # gene_df = pd.DataFrame([], index=ge_gene_list, columns=ge_gene_list)
         # Populate gene-gene network with zeros.
-        gene_df.fillna(value=0, inplace=True)
+        # gene_df.fillna(value=0, inplace=True)
         # Read each CRISPR network.
         for fname in listdir_fullpath('./data/CRISPR_networks'):
             print fname
-            read_gene_network(gene_df, ge_gene_list, fname)
-        ge_table = compute_essential(ge_table, gene_df.as_matrix())
+            read_gene_network(gene_net, ge_gene_list, fname)
+        # ge_table = compute_essential(ge_table, gene_df.as_matrix())
+        ge_table = compute_essential(ge_table, gene_net)
     print 'finished reading'
     # Predict on drug response. GDSC needs regression.
     # This spearmanr only returns the correlation, not the p-value.
