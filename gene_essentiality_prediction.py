@@ -7,8 +7,8 @@ import os
 import pandas as pd
 from scipy.stats import *
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.metrics import make_scorer, f1_score, precision_score, recall_score
-from sklearn.cross_validation import train_test_split, ShuffleSplit, cross_val_score, KFold
+from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.cross_validation import cross_val_predict, KFold, StratifiedKFold
 from sklearn.linear_model import RidgeClassifier, Ridge, ElasticNet, Lasso, Lars, LogisticRegression
 from sklearn.svm import SVR, SVC
 
@@ -146,13 +146,42 @@ def read_xeno_drug_response():
     '''
     Maps each drug to the cell lines that have response values for that drug.
     '''
+    def read_gdsc_translation():
+        '''
+        Reads the drugs the Xenograft has in common with GDSC.
+        '''
+        drug_translation_dct = {}
+        f = open('./data/Data_summary.txt', 'r')
+        f.readline()
+        for line in f:
+            line = line.strip().split('\t')
+            if len(line) != 3:
+                continue
+            drug, gdsc, xenograft = line
+            # Skip drugs that do not exist for both datasets.
+            if 'Y' not in gdsc or 'Y' not in xenograft:
+                continue
+            if '(' not in xenograft:
+                drug_translation_dct[drug] = drug.lower()
+            else:
+                drug_translation_dct[xenograft.split()[1][1:-1]] = drug.lower()
+        f.close()
+        return drug_translation_dct
+
+    drug_translation_dct = read_gdsc_translation()
+
     xeno_dr_dct = {}
     f = open('./data/Xenograft2/DrugResponsesAUCModels.txt', 'r')
     f.readline() # Skip the header line.
     for line in f:
         line = line.strip().split('\t')
-        sample, drug, ic50 = line[0], line[2].lower(), np.log(float(line[4]))
+        sample, drug, ic50 = line[0], line[1], np.log(float(line[3]))
         assert '.txt' not in sample and not sample.isdigit()
+
+        # Skip drugs that are not also in GDSC.
+        if drug not in drug_translation_dct:
+            continue
+        drug = drug_translation_dct[drug]
 
         # Update the drug response dictionary.
         key = (drug, sample)
@@ -209,6 +238,8 @@ def read_xeno_gene_expr():
     # Convert the expression matrix to a dataframe.
     xeno_table = pd.DataFrame(data=np.array(xeno_expr_matrix), index=gene_list,
         columns=sample_list)
+    xeno_table.replace({'NA':np.nan}, inplace=True)
+    xeno_table.dropna(axis=0, how='any', inplace=True)
     return xeno_table
 
 def read_gene_network(gene_df, gene_list, fname):
@@ -243,6 +274,7 @@ def compute_essential(c2g,net):
     ncell, ngene = c2g.shape
     score = np.zeros([ncell, ngene])
     for g in range(ngene):
+        print g
         ngh = np.where(net[g,:]!=0)
         if len(ngh) == 1 and len(ngh[0]) == 0:
             continue
@@ -258,10 +290,10 @@ def parse_args():
         required=True, choices=['gdsc', 'tcga', 'xeno'])
     parser.add_argument('-n', '--num_rounds', help='Number of rounds to train',
         required=True)
-    parser.add_argument('-m', '--method', help='Method type.', choices=['baseline', 'essentiality'],
-        required=True)    
-    parser.add_argument('-f', '--num_folds', help='Number of folds.', choices=['3', '5'],
-        required=True)
+    parser.add_argument('-m', '--method', help='Method type.', choices=[
+        'baseline', 'essentiality'], required=True)
+    parser.add_argument('-f', '--num_folds', help='Number of folds.',
+        choices=['3', '5'], required=True)
     return parser.parse_args()
 
 def main():
@@ -274,8 +306,8 @@ def main():
     # Gene expression table must be sample x gene DataFrame.
     # Drug response table must be a drug x sample DataFrame.
     if args.data_source == 'gdsc':
-        ge_table = pd.read_table('./data/GDSC/sanger1018_brainarray_ensemblgene_rma.txt',
-            index_col=0, header=0)
+        gdsc_ge_fname = './data/GDSC/sanger1018_brainarray_ensemblgene_rma.txt'
+        ge_table = pd.read_table(gdsc_ge_fname, index_col=0, header=0)
         dr_table = read_gdsc_drug_response()
     elif args.data_source == 'tcga':
         ge_table = get_tcga_ge_table()
@@ -284,7 +316,7 @@ def main():
         ge_table = read_xeno_gene_expr()
         dr_table = read_xeno_drug_response()
 
-    # print ge_table.shape, dr_table.shape
+    print ge_table.shape, dr_table.shape
 
     # Get the samples in both gene expression and drug response.
     ge_gene_list, ge_sample_list = list(ge_table.index.values), list(ge_table)
@@ -292,6 +324,8 @@ def main():
     intersect_samples = list(set(ge_sample_list).intersection(dr_sample_list))
     ge_table = ge_table[intersect_samples].transpose().as_matrix()
     dr_table = dr_table[intersect_samples].as_matrix()
+
+    print ge_table.shape, dr_table.shape
 
     if args.method == 'essentiality':
         # num_genes = len(ge_gene_list)
@@ -301,29 +335,32 @@ def main():
         gene_df.fillna(value=0, inplace=True)
         # Read each CRISPR network.
         for fname in listdir_fullpath('./data/CRISPR_networks'):
+            print fname
             read_gene_network(gene_df, ge_gene_list, fname)
         ge_table = compute_essential(ge_table, gene_df.as_matrix())
-
+    print 'finished reading'
     # Predict on drug response. GDSC needs regression.
     # This spearmanr only returns the correlation, not the p-value.
     if args.data_source in ['gdsc', 'xeno']:
         personal_spearmanr = lambda x, y: stats.spearmanr(x, y)[0]
-        spearman_scorer = make_scorer(personal_spearmanr)
-        score_type_dct = {'spearman':spearman_scorer}
+        # spearman_scorer = make_scorer(personal_spearmanr)
+        score_type_dct = {'spearman':personal_spearmanr}
         class_dct = {'ridge':Ridge(), 'lasso':Lasso(),'elastic':ElasticNet(
             l1_ratio=0.15), 'lars':Lars(), 'rand_for_r':RandomForestRegressor(
             max_depth=5, min_samples_split=0.05), 'linear_svm':SVR(
             kernel='linear'), 'rbf_svr':SVR()}
     elif args.data_source == 'tcga':
-        score_type_dct = {'precision':make_scorer(precision_score), 'recall':make_scorer(
-            recall_score), 'f1':make_scorer(f1_score)}
+        # score_type_dct = {'precision':make_scorer(precision_score), 'recall':make_scorer(
+        #     recall_score), 'f1':make_scorer(f1_score)}
+        score_type_dct = {'precision':precision_score, 'recall':recall_score,
+            'f1':f1_score}
         class_dct = {'ridge':RidgeClassifier(), 'rand_for_c':RandomForestClassifier(
             max_depth=5, min_samples_split=0.05), 'linear_svc':SVC(
             kernel='linear'), 'rbf_svc':SVC(), 'logit':LogisticRegression()}
 
     score_dct = {}
-    # TODO: these are the 12 drugs across all three datasets.
-    all_drug_lst = ['bicalutamide', 'cisplatin', 'docetaxel', 'erlotinib', 'gefitinib', 'lapatinib', 'paclitaxel', 'sorafenib', 'tamoxifen', 'temozolomide', 'vinblastine']
+    # TODO: these are the 14 drugs across all three datasets.
+    all_drug_lst = ['bicalutamide', 'cisplatin', 'dabrafenib', 'docetaxel', 'erlotinib', 'gefitinib', 'lapatinib', 'paclitaxel', 'sorafenib', 'tamoxifen', 'temozolomide', 'trametinib', 'vinblastine']
 
     for classifier_name in class_dct:
         # Get the classifier object.
@@ -331,7 +368,6 @@ def main():
         for drug_idx, drug_row in enumerate(dr_table):
             if dr_drug_list[drug_idx].split('_')[0] not in all_drug_lst:
                 continue
-            print dr_drug_list[drug_idx]
             # Get the non-NaN indices.
             if args.data_source in ['gdsc', 'xeno']:
                 nan_idx_lst = [i for i, e in enumerate(drug_row) if not np.isnan(e)]
@@ -339,7 +375,6 @@ def main():
                 nan_idx_lst = [i for i, e in enumerate(drug_row) if e != None]
 
             drug_row, drug_ge_table = drug_row[nan_idx_lst], ge_table[nan_idx_lst]
-
             # Skip drugs with very few drug responses.
             if len(drug_row) < 5:
                 continue
@@ -349,28 +384,40 @@ def main():
 
             # y_pred = clf.predict(X_test)
 
+            if args.data_source in ['gdsc', 'xeno']:
+                cv = KFold(n=len(drug_row), n_folds=int(args.num_folds),
+                    shuffle=True)
+            else:
+                cv = StratifiedKFold(y=drug_row, n_folds=int(args.num_folds),
+                    shuffle=True)
+
+            drug_pred = cross_val_predict(clf, drug_ge_table, drug_row, cv=cv,
+                n_jobs=24)
+
             # Get the actual scores of CV.
             for score_name in score_type_dct:
                 # Repeat the classifier for num_rounds.
-                for i in range(int(args.num_rounds)):
+                # for i in range(int(args.num_rounds)):
                     # Kfold
-                    key = classifier_name + '_' + score_name
-                    if key not in score_dct:
-                        score_dct[key] = np.array([])
-                    # TODO: stratified kfold for classifier?
-                # score_dct[key] = np.append(score_dct[key], stats.spearmanr(y_pred, y_test)[0])
-                    score_dct[key] = np.append(score_dct[key], cross_val_score(clf,
-                        drug_ge_table, drug_row, cv=KFold(n=len(drug_row),
-                            n_folds=int(args.num_folds), shuffle=True),
-                            scoring=score_type_dct[score_name], n_jobs=1))
+                key = (classifier_name, score_name)
+                if key not in score_dct:
+                    score_dct[key] = np.array([])
+                # TODO: stratified kfold for classifier?
+                if args.data_source in ['gdsc', 'xeno']:
+                    score = score_type_dct[score_name](drug_pred, drug_row)
+                else:
+                    score = score_type_dct[score_name](drug_pred, drug_row, average='weighted')
+                score_dct[key] = np.append(score_dct[key], score)
                 print score_dct[key]
 
     # Write results out to file.
-    out = open('./results/prediction_scores/%s_%s_%s_%s.txt' % (args.data_source,
-        args.num_rounds, args.method, args.num_folds), 'w')
+    # out = open('./results/prediction_scores/%s_%s_%s_%s.txt' % (args.data_source,
+    #     args.num_rounds, args.method, args.num_folds), 'w')
     for key in score_dct:
-        out.write('%s\t%f\n' % (key, np.mean(score_dct[key])))
-    out.close()
+        score_dct[key] = np.mean(score_dct[key])
+    score_dct = pd.Series(score_dct).unstack()
+    score_dct.to_csv('./results/prediction_scores/%s_%s_%s_%s.csv' % (args.data_source,
+        args.num_rounds, args.method, args.num_folds))
 
 if __name__ == '__main__':
     main()
