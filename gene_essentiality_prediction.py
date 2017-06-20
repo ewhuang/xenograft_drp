@@ -1,7 +1,8 @@
 ### Author: Edward Huang
 
 import argparse
-from csv import reader
+import csv
+from multiprocessing import Pool
 import numpy as np
 import os
 import pandas as pd
@@ -103,9 +104,7 @@ def read_tcga_drug_response():
         Value: sample ID -> str, e.g., TCGA-OR-A5KT-01
         '''
         f = open(fname, 'r')
-        it = reader(f)
-        it.next()
-        for sample_fname, sample_type, sample_id, race, cancer in it:
+        for sample_fname, sample_type, sample_id, race, cancer in csv.reader(f):
             # Only use samples that are primary tumors.
             if sample_type != 'Primary Tumor':
                 continue
@@ -192,20 +191,21 @@ def read_xeno_drug_response():
     xeno_dr_df = pd.Series(xeno_dr_dct).unstack()
     return xeno_dr_df
 
-def read_tcga_gene_expr_file(fname, gene_expr_table):
-    table = pd.read_csv(fname, index_col=0)
-    # Get the samples for this cancer's gene expression.
-    ret = pd.concat([gene_expr_table, table], axis=1)
-    assert list(table.index) == list(ret.index)
-    return ret
-
-def get_tcga_ge_table():
+def get_tcga_ge_table():    
+    def read_tcga_gene_expr_file(fname, gene_expr_table):
+        table = pd.read_csv(fname, index_col=0)
+        # Get the samples for this cancer's gene expression.
+        ret = pd.concat([gene_expr_table, table], axis=1)
+        assert list(table.index) == list(ret.index)
+        return ret
+        
     tcga_table = pd.DataFrame()
     for subfolder in listdir_fullpath('./data/TCGA/RNAseq'):
         for fname in listdir_fullpath(subfolder):
             if 'FPKM' in fname:
                 tcga_table = read_tcga_gene_expr_file(fname, tcga_table)
     # Log 2 transform just the TCGA matrix.
+    tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
     tcga_table = tcga_table.add(0.1) # Add pseudo-counts to avoid NaN errors.
     tcga_table = np.log2(tcga_table)
     return tcga_table
@@ -223,7 +223,7 @@ def read_xeno_gene_expr():
             sample_list = line[1:]
             continue
         hgnc_id, expr_lst = line[0], line[1:]
-        if hgnc_id not in hgnc_to_ensg_dct:
+        if hgnc_id not in hgnc_to_ensg_dct or 'NA' in expr_lst:
             continue
         ensg_id_set = hgnc_to_ensg_dct[hgnc_id]
         # HGNC ids might amap to multiple ENSG ids.
@@ -238,44 +238,50 @@ def read_xeno_gene_expr():
     # Convert the expression matrix to a dataframe.
     xeno_table = pd.DataFrame(data=np.array(xeno_expr_matrix), index=gene_list,
         columns=sample_list)
-    xeno_table.replace({'NA':np.nan}, inplace=True)
-    xeno_table.dropna(axis=0, how='any', inplace=True)
+    # xeno_table.replace({'NA':np.nan}, inplace=True)
+    # xeno_table.dropna(axis=0, how='any', inplace=True)
+    xeno_table = xeno_table[xeno_table<1].dropna(thresh=xeno_table.shape[1]*0.9)
+    xeno_table = xeno_table.convert_objects(convert_numeric=True)
     return xeno_table
 
 # def read_gene_network(gene_df, gene_list, fname):
-def read_gene_network(gene_net, gene_list, fname):
+# def read_gene_network(gene_net, gene_list, fname):
+def read_gene_network(fname):
     '''
     Reads the gene-to-gene network, and converts it into a numpy matrix, where
     an entry from i to j means that there was an entry i\tj in the network.
     '''
+    # edge_list = []
+    edge_dct = {}
     f = open(fname, 'r')
     for line in f:
         gene_i, gene_j = line.split()
-        # Skip genes that do not have valid ENSG mappings.
+        # # Skip genes that do not have valid ENSG mappings.
         if gene_i not in hgnc_to_ensg_dct or gene_j not in hgnc_to_ensg_dct:
             continue
         gene_i_set = hgnc_to_ensg_dct[gene_i]
         gene_j_set = hgnc_to_ensg_dct[gene_j]
-        # Loop through every possible pair of genes in one direction.
-        for gene_i in gene_i_set:
-            # Skip genes not in the gene expression matrix.
-            if gene_i not in gene_list:
-                continue
-            # Get index of gene in the gene list.
-            gene_i_idx = gene_list.index(gene_i)
-            for gene_j in gene_j_set:
-                if gene_j not in gene_list:
-                    continue
-                gene_j_idx = gene_list.index(gene_j)
-                gene_net[gene_i_idx, gene_j_idx] = 1
-                # gene_df.set_value(gene_i, gene_j, 1)
+        # # Loop through every possible pair of genes in one direction.
+        for ensg_i in gene_i_set:
+        #     # Skip genes not in the gene expression matrix.
+        #     if gene_i not in gene_list:
+        #         continue
+        #     # Get index of gene in the gene list.
+            # gene_i_idx = gene_list.index(gene_i)
+            for ensg_j in gene_j_set:
+        #         if gene_j not in gene_list:
+        #             continue
+                # gene_j_idx = gene_list.index(gene_j)
+        #         gene_net[gene_i_idx, gene_j_idx] = 1
+        #         # gene_df.set_value(gene_i, gene_j, 1)
+                edge_dct[(ensg_i, ensg_j)] = 1
     f.close()
+    return edge_dct
 
 def compute_essential(c2g,net):
     ncell, ngene = c2g.shape
     score = np.zeros([ncell, ngene])
     for g in range(ngene):
-        print g
         ngh = np.where(net[g,:]!=0)
         if len(ngh) == 1 and len(ngh[0]) == 0:
             continue
@@ -304,7 +310,7 @@ def main():
     global hgnc_to_ensg_dct
     hgnc_to_ensg_dct = read_hgnc_mappings()
 
-    # Gene expression table must be sample x gene DataFrame.
+    # Gene expression table must be gene x sample DataFrame.
     # Drug response table must be a drug x sample DataFrame.
     if args.data_source == 'gdsc':
         gdsc_ge_fname = './data/GDSC/sanger1018_brainarray_ensemblgene_rma.txt'
@@ -317,7 +323,7 @@ def main():
         ge_table = read_xeno_gene_expr()
         dr_table = read_xeno_drug_response()
 
-    print ge_table.shape, dr_table.shape
+    print(ge_table.shape, dr_table.shape)
 
     # Get the samples in both gene expression and drug response.
     ge_gene_list, ge_sample_list = list(ge_table.index.values), list(ge_table)
@@ -326,21 +332,36 @@ def main():
     ge_table = ge_table[intersect_samples].transpose().as_matrix()
     dr_table = dr_table[intersect_samples].as_matrix()
 
-    print ge_table.shape, dr_table.shape
+    print(ge_table.shape, dr_table.shape)
 
     if args.method == 'essentiality':
-        num_genes = len(ge_gene_list)
-        gene_net = np.zeros([num_genes, num_genes])
-        # gene_df = pd.DataFrame([], index=ge_gene_list, columns=ge_gene_list)
+        # num_genes = len(ge_gene_list)
+        # gene_net = np.zeros([num_genes, num_genes])
+        gene_df = pd.DataFrame([], index=ge_gene_list, columns=ge_gene_list)
         # Populate gene-gene network with zeros.
-        # gene_df.fillna(value=0, inplace=True)
+        # gene_df = gene_df.fillna(value=0)
         # Read each CRISPR network.
-        for fname in listdir_fullpath('./data/CRISPR_networks'):
-            print fname
-            read_gene_network(gene_net, ge_gene_list, fname)
-        # ge_table = compute_essential(ge_table, gene_df.as_matrix())
-        ge_table = compute_essential(ge_table, gene_net)
-    print 'finished reading'
+
+        print('reading crispr nets...')
+        pool = Pool(processes=20)
+        results = pool.map(read_gene_network, listdir_fullpath(
+            './data/CRISPR_networks'))
+        print('done reading crispr nets')
+        edge_dct = {}
+        for result in results:
+            edge_dct.update(result)
+        print(list(edge_dct.keys())[:5])
+        print('done updating edge dictionary')
+        gene_df = gene_df.fillna(pd.Series(edge_dct).unstack())
+        gene_df = gene_df.fillna(value=0)
+        print('done filling missing values')
+        # for fname in listdir_fullpath('./data/CRISPR_networks'):
+        #     print(fname)
+        #     # read_gene_network(gene_net, ge_gene_list, fname)
+        #     pool.map(read_gene_network, fname)
+        ge_table = compute_essential(ge_table, gene_df.as_matrix())
+        # ge_table = compute_essential(ge_table, gene_net)
+    print('finished reading')
     # Predict on drug response. GDSC needs regression.
     # This spearmanr only returns the correlation, not the p-value.
     if args.data_source in ['gdsc', 'xeno']:
@@ -410,7 +431,7 @@ def main():
                 else:
                     score = score_type_dct[score_name](drug_pred, drug_row, average='weighted')
                 score_dct[key] = np.append(score_dct[key], score)
-                print score_dct[key]
+                # print(score_dct[key])
 
     # Write results out to file.
     # out = open('./results/prediction_scores/%s_%s_%s_%s.txt' % (args.data_source,
