@@ -33,7 +33,7 @@ def listdir_fullpath(d):
 
 def read_tcga_drug_response():
     '''
-    Reads the TCGA drug response.
+    Reads the TCGA drug response. Responses are categories.
     '''
     def read_tcga_spreadsheet(tcga_id_to_fname_dct, fname):
         '''
@@ -42,9 +42,7 @@ def read_tcga_drug_response():
         Value: sample ID -> str, e.g., TCGA-OR-A5KT-01
         '''
         f = open(fname, 'r')
-        it = reader(f)
-        it.next()
-        for sample_fname, sample_type, sample_id, race, cancer in it:
+        for sample_fname, sample_type, sample_id, race, cancer in reader(f):
             # Only use samples that are primary tumors.
             if sample_type != 'Primary Tumor':
                 continue
@@ -60,6 +58,9 @@ def read_tcga_drug_response():
         for fname in listdir_fullpath(subfolder):
             if 'Pheno_All' in fname:
                 read_tcga_spreadsheet(tcga_id_to_fname_dct, fname)
+    # Simple tests.
+    assert tcga_id_to_fname_dct['TCGA-G9-7522'] == '3a8adea5-5520-41de-aed8-dfce2d52386e.FPKM.txt'
+    assert tcga_id_to_fname_dct['TCGA-HU-A4GF'] == '1e46ba47-0a66-4f70-b508-c619c6129e33.FPKM.txt'
 
     # Read the drug response file.
     tcga_drug_to_sample_dct, tcga_dr_dct = {}, {}
@@ -71,6 +72,7 @@ def read_tcga_drug_response():
         # Skip samples that are not primary tumors.
         if sample_id not in tcga_id_to_fname_dct:
             continue
+        # Map samples to filenames for the gene expression files.
         sample_fname = tcga_id_to_fname_dct[sample_id]
         assert '.txt' in sample_fname
 
@@ -97,7 +99,7 @@ def read_gdsc_drug_response():
         '''
         drug_id_to_name_dct = {}
         f = open('./data/GDSC/Screened_Compounds.txt', 'r')
-        f.readline() # Skip the header line.asss
+        f.readline() # Skip the header line.
         for line in f:
             line = line.strip().split('\t')
             assert len(line) == 5
@@ -108,6 +110,9 @@ def read_gdsc_drug_response():
         return drug_id_to_name_dct
 
     drug_id_to_name_dct = read_drug_id_to_name_dct()
+    # Simple tests.
+    assert drug_id_to_name_dct['1'] == 'erlotinib'
+    assert drug_id_to_name_dct['172'] == 'embelin'
 
     gdsc_drug_to_sample_dct, gdsc_dr_dct = {}, {}
     f = open('./data/GDSC/v17_fitted_dose_response.txt', 'r')
@@ -116,8 +121,8 @@ def read_gdsc_drug_response():
         line = line.strip().split('\t')
         sample_id, drug_id, ln_ic50 = line[2], line[3], line[5]
         assert sample_id.isdigit()
-        # Skip unmappable drugs.
-        if drug_id not in drug_id_to_name_dct:
+        # Skip unmappable drugs and the worse version of bicalutamide.
+        if drug_id not in drug_id_to_name_dct or drug_id == '150':
             continue
         drug_name = drug_id_to_name_dct[drug_id]
 
@@ -127,9 +132,7 @@ def read_gdsc_drug_response():
         gdsc_drug_to_sample_dct[drug_name].add(sample_id)
 
         # Update the drug response dictionary.
-        key = ('%s_%s' % (drug_name, drug_id), sample_id)
-        assert key not in gdsc_dr_dct
-        gdsc_dr_dct[key] = float(ln_ic50)
+        gdsc_dr_dct[(drug_name, sample_id)] = float(ln_ic50)
     f.close()
     # Now, convert the drug response dictionary to a dataframe.
     gdsc_dr_df = pd.Series(gdsc_dr_dct).unstack()
@@ -157,11 +160,16 @@ def read_xeno_drug_response():
             if '(' not in xenograft:
                 drug_translation_dct[drug] = drug.lower()
             else:
+                # [1:-1] to exclude the surrounding parentheses.
                 drug_translation_dct[xenograft.split()[1][1:-1]] = drug.lower()
         f.close()
         return drug_translation_dct
 
     drug_translation_dct = read_gdsc_translation()
+    # Simple tests.
+    assert 'Cetuximab' not in drug_translation_dct
+    assert 'cetuximab' not in drug_translation_dct
+    assert drug_translation_dct['GSK2118436'] == 'dabrafenib'
 
     xeno_drug_to_sample_dct, xeno_dr_dct = {}, {}
     f = open('./data/Xenograft2/DrugResponsesAUC%s.txt' % args.xeno_type, 'r')
@@ -195,19 +203,23 @@ def read_xeno_drug_response():
 
 def read_tcga_gene_expr():
     def read_tcga_gene_expr_file(fname, gene_expr_table):
+        '''
+        Reads a gene x sample matrix. Contains many zeros.
+        '''
         curr_table = pd.read_csv(fname, index_col=0)
         ret = pd.concat([gene_expr_table, curr_table], axis=1)
         return ret
-
+    # Concatenate the gene expression matrices across the different cancers.
     tcga_table = pd.DataFrame()
     for subfolder in listdir_fullpath('%s/RNAseq' % tcga_folder):
         for fname in listdir_fullpath(subfolder):
             if 'FPKM' in fname:
                 tcga_table = read_tcga_gene_expr_file(fname, tcga_table)
-    # Remove genes that are non-expressed.
+    # At least 10% of genes must have value > 1 pre log-transformation.
     tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
+    # Add pseudo-counts to avoid NaN errors with log.
+    tcga_table = tcga_table.add(0.1)
     # Log 2 transform just the TCGA matrix.
-    tcga_table = tcga_table.add(0.1) # Add pseudo-counts to avoid NaN errors.
     return np.log2(tcga_table)
 
 def read_gdsc_gene_expr():
@@ -293,6 +305,7 @@ def concatenate_expression_matrices(curr_drug, drugs_in_common=[]):
 
     # Get the Xenograft gene expression dataframe, if necessary.
     if args.xeno_type != None:
+        assert curr_drug == 'all'
         # Single drug mode not available for Xenograft data.
         xeno_drug_samples = set([])
         for drug in drugs_in_common:
@@ -303,11 +316,10 @@ def concatenate_expression_matrices(curr_drug, drugs_in_common=[]):
 
     # Concatenate the TCGA and GDSC tables.
     gene_expr_table = pd.concat(concat_table, axis=1)
-    # Drop NaN columns.
+    # Drop a gene if there are any NaNs.
     gene_expr_table = gene_expr_table.dropna(axis=0, how='any')
     # Drop rows with low standard deviation.
     gene_expr_table = gene_expr_table[gene_expr_table.std(axis=1)>0.1]
-    # TODO: drop drows with non-expressed genes.
     # Write the full table out to file.
     gene_expr_table.to_csv('./data/%s/before_combat/%s_gene_expr_before_combat.csv'
         % (results_folder, curr_drug))
@@ -329,8 +341,9 @@ def write_drug_response_matrices(drugs_in_common, df_tuple_lst, sample_lst):
         # Drop drugs that aren't in the combined datasets.
         for drug in dr_df.index.values:
             # Split by underscore because we tagged on drug IDs for GDSC.
-            if drug.split('_')[0] not in drugs_in_common:
+            if drug not in drugs_in_common:
                 dr_df = dr_df.drop(drug)
+        # Remove missing columns.
         dr_df.dropna(axis=1, how='all', inplace=True)
         # Fill in missing values with easy-to-identify value, 'NA'.
         dr_df.fillna(value='NA', inplace=True)
@@ -350,6 +363,7 @@ def write_drug_matrices():
 
     # Get the drugs that are shared by both datasets.
     drugs_in_common = set(tcga_drugs).intersection(gdsc_drugs)
+    # Write out drug response matrices when using all drugs.
     if args.drug_strat == 'all':
         df_tuple_lst = [(tcga_dr_df, 'tcga_dr'), (gdsc_dr_df, 'gdsc_dr')]
 
@@ -360,9 +374,7 @@ def write_drug_matrices():
         xeno_drugs = xeno_drug_to_sample_dct.keys()
         # Further intersect drugs with Xenograft drugs.
         drugs_in_common = drugs_in_common.intersection(xeno_drugs)
-        if args.drug_strat == 'all':
-            # Add Xenograft drug response dataframe.
-            df_tuple_lst += [(xeno_dr_df, 'xeno_dr_%s' % args.xeno_type)]
+        df_tuple_lst += [(xeno_dr_df, 'xeno_dr_%s' % args.xeno_type)]
 
     ### Next, get the gene expression information.
     # Get the TCGA gene expression dataframe.
@@ -391,10 +403,9 @@ def write_drug_matrices():
 def write_pheno_file(drug):
     f = open('./data/%s/before_combat/%s_gene_expr_before_combat.csv' %
         (results_folder, drug), 'r')
-    it = reader(f)
     # Read the header of the gene expression matrix, given a drug.
     # This is the list of samples.
-    header = it.next()[1:]
+    header = next(reader(f))[1:]
     f.close()
     # Write out the batches of each drug.
     out = open('./data/%s/before_combat/%s_pheno.txt' % (results_folder, drug), 'w')
@@ -416,7 +427,7 @@ def plot_stitched_gene_expr(drug, when):
     f = open('./data/single_drugs/%s_combat/%s_gene_expr_%s_combat.csv' % (when,
         drug, when), 'r')
     it = reader(f)
-    header = it.next()[1:]
+    header = next(it)[1:]
     colors = ['black' if '.txt' in sample else 'white' for sample in header]
     for line in it:
         # Skip lines that are all NAs.
@@ -453,20 +464,25 @@ def separate_concat_mats():
     table = pd.read_csv('./data/%s/after_combat/all_gene_expr_after_combat.csv' %
         results_folder, index_col=0)
     current_columns = list(table)
+    total_num_columns = 0 # Sanity check.
     # Write out the TCGA table.
     tcga_cols = [col for col in current_columns if '.txt' in col]
     tcga_table = table[tcga_cols]
     tcga_table.to_csv('./data/%s/tcga.csv' % results_folder)
+    total_num_columns += len(list(tcga_table))
     # Write out the GDSC table.
     gdsc_cols = [col for col in current_columns if col[1:].isdigit()]
     gdsc_table = table[gdsc_cols]
     gdsc_table.to_csv('./data/%s/gdsc.csv' % results_folder)
+    total_num_columns += len(list(gdsc_table))
 
     if args.xeno_type != None:
         xeno_cols = [col for col in current_columns if ('.txt' not in col and
             not col[1:].isdigit())]
         xeno_table = table[xeno_cols]
+        total_num_columns += len(list(xeno_table))
         xeno_table.to_csv('./data/%s/xeno_%s.csv' % (results_folder, args.xeno_type))
+    assert total_num_columns == len(current_columns)
 
 def parse_args():
     global args
@@ -492,7 +508,7 @@ def main():
     parse_args()
     parse_results_folder()
     generate_directories()
-    #here
+
     drugs_in_common = write_drug_matrices()
 
     if args.drug_strat == 'all':

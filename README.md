@@ -11,5 +11,5 @@ Drug response prediction with xenograft data.
     since the script can't properly read .xlsx files.
     
     ```bash
-    python preprocess_batch_effect.py [-d] [-x]
+    python preprocess_batch_effect.py [-h] -d {single,all} [-x {Models,Samples}]
     ```
