@@ -9,7 +9,8 @@ import pandas as pd
 from scipy.stats import *
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import f1_score, precision_score, recall_score
-from sklearn.cross_validation import cross_val_predict, KFold, StratifiedKFold
+# from sklearn.cross_validation import cross_val_predict, KFold, StratifiedKFold
+from sklearn.model_selection import cross_val_predict, KFold, StratifiedKFold
 from sklearn.linear_model import RidgeClassifier, Ridge, ElasticNet, Lasso, Lars, LogisticRegression
 from sklearn.svm import SVR, SVC
 
@@ -71,6 +72,9 @@ def read_gdsc_drug_response():
         return drug_id_to_name_dct
 
     drug_id_to_name_dct = read_drug_id_to_name_dct()
+    # Simple tests.
+    assert drug_id_to_name_dct['1'] == 'erlotinib'
+    assert drug_id_to_name_dct['172'] == 'embelin'
 
     gdsc_dr_dct = {}
     f = open('./data/GDSC/v17_fitted_dose_response.txt', 'r')
@@ -120,6 +124,9 @@ def read_tcga_drug_response():
         for fname in listdir_fullpath(subfolder):
             if 'Pheno_All' in fname:
                 read_tcga_spreadsheet(tcga_id_to_fname_dct, fname)
+    # Simple tests.
+    assert tcga_id_to_fname_dct['TCGA-G9-7522'] == '3a8adea5-5520-41de-aed8-dfce2d52386e.FPKM.txt'
+    assert tcga_id_to_fname_dct['TCGA-HU-A4GF'] == '1e46ba47-0a66-4f70-b508-c619c6129e33.FPKM.txt'
 
     # Read the drug response file.
     tcga_dr_dct = {}
@@ -168,6 +175,10 @@ def read_xeno_drug_response():
         return drug_translation_dct
 
     drug_translation_dct = read_gdsc_translation()
+    # Simple tests.
+    assert 'Cetuximab' not in drug_translation_dct
+    assert 'cetuximab' not in drug_translation_dct
+    assert drug_translation_dct['GSK2118436'] == 'dabrafenib'
 
     xeno_dr_dct = {}
     f = open('./data/Xenograft2/DrugResponsesAUCModels.txt', 'r')
@@ -193,10 +204,11 @@ def read_xeno_drug_response():
 
 def get_tcga_ge_table():    
     def read_tcga_gene_expr_file(fname, gene_expr_table):
+        '''
+        Reads a gene x sample matrix. Contains many zeros.
+        '''
         table = pd.read_csv(fname, index_col=0)
-        # Get the samples for this cancer's gene expression.
         ret = pd.concat([gene_expr_table, table], axis=1)
-        assert list(table.index) == list(ret.index)
         return ret
         
     tcga_table = pd.DataFrame()
@@ -207,8 +219,7 @@ def get_tcga_ge_table():
     # Log 2 transform just the TCGA matrix.
     tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
     tcga_table = tcga_table.add(0.1) # Add pseudo-counts to avoid NaN errors.
-    tcga_table = np.log2(tcga_table)
-    return tcga_table
+    return np.log2(tcga_table)
 
 def read_xeno_gene_expr():
     '''
@@ -251,7 +262,6 @@ def read_gene_network(fname):
     Reads the gene-to-gene network, and converts it into a numpy matrix, where
     an entry from i to j means that there was an entry i\tj in the network.
     '''
-    # edge_list = []
     edge_dct = {}
     f = open(fname, 'r')
     for line in f:
@@ -263,17 +273,7 @@ def read_gene_network(fname):
         gene_j_set = hgnc_to_ensg_dct[gene_j]
         # # Loop through every possible pair of genes in one direction.
         for ensg_i in gene_i_set:
-        #     # Skip genes not in the gene expression matrix.
-        #     if gene_i not in gene_list:
-        #         continue
-        #     # Get index of gene in the gene list.
-            # gene_i_idx = gene_list.index(gene_i)
             for ensg_j in gene_j_set:
-        #         if gene_j not in gene_list:
-        #             continue
-                # gene_j_idx = gene_list.index(gene_j)
-        #         gene_net[gene_i_idx, gene_j_idx] = 1
-        #         # gene_df.set_value(gene_i, gene_j, 1)
                 edge_dct[(ensg_i, ensg_j)] = 1
     f.close()
     return edge_dct
@@ -295,12 +295,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--data_source', help='Type of data',
         required=True, choices=['gdsc', 'tcga', 'xeno'])
-    parser.add_argument('-n', '--num_rounds', help='Number of rounds to train',
-        required=True)
     parser.add_argument('-m', '--method', help='Method type.', choices=[
         'baseline', 'essentiality'], required=True)
-    parser.add_argument('-f', '--num_folds', help='Number of folds.',
-        choices=['3', '5'], required=True)
+    parser.add_argument('-i', '--input_net', help='Input network file name (full path).')
+    parser.add_argument('-f', '--num_folds', help='Number of folds.', required=True)
     return parser.parse_args()
 
 def main():
@@ -335,46 +333,24 @@ def main():
     print(ge_table.shape, dr_table.shape)
 
     if args.method == 'essentiality':
-        # num_genes = len(ge_gene_list)
-        # gene_net = np.zeros([num_genes, num_genes])
+        # essentiality mode requires an input network.
+        assert args.input_net != None and os.path.exists(args.input_net)
         gene_df = pd.DataFrame([], index=ge_gene_list, columns=ge_gene_list)
-        # Populate gene-gene network with zeros.
-        # gene_df = gene_df.fillna(value=0)
-        # Read each CRISPR network.
-
-        print('reading crispr nets...')
-        pool = Pool(processes=20)
-        results = pool.map(read_gene_network, listdir_fullpath(
-            './data/CRISPR_networks'))
-        print('done reading crispr nets')
-        edge_dct = {}
-        for result in results:
-            edge_dct.update(result)
-        print(list(edge_dct.keys())[:5])
-        print('done updating edge dictionary')
+        edge_dct = read_gene_network(args.input_net)
         gene_df = gene_df.fillna(pd.Series(edge_dct).unstack())
         gene_df = gene_df.fillna(value=0)
         print('done filling missing values')
-        # for fname in listdir_fullpath('./data/CRISPR_networks'):
-        #     print(fname)
-        #     # read_gene_network(gene_net, ge_gene_list, fname)
-        #     pool.map(read_gene_network, fname)
         ge_table = compute_essential(ge_table, gene_df.as_matrix())
-        # ge_table = compute_essential(ge_table, gene_net)
     print('finished reading')
     # Predict on drug response. GDSC needs regression.
     # This spearmanr only returns the correlation, not the p-value.
     if args.data_source in ['gdsc', 'xeno']:
-        personal_spearmanr = lambda x, y: stats.spearmanr(x, y)[0]
-        # spearman_scorer = make_scorer(personal_spearmanr)
-        score_type_dct = {'spearman':personal_spearmanr}
+        score_type_dct = {'spearman':lambda x, y: stats.spearmanr(x, y)[0]}
         class_dct = {'ridge':Ridge(), 'lasso':Lasso(),'elastic':ElasticNet(
             l1_ratio=0.15), 'lars':Lars(), 'rand_for_r':RandomForestRegressor(
             max_depth=5, min_samples_split=0.05), 'linear_svm':SVR(
             kernel='linear'), 'rbf_svr':SVR()}
     elif args.data_source == 'tcga':
-        # score_type_dct = {'precision':make_scorer(precision_score), 'recall':make_scorer(
-        #     recall_score), 'f1':make_scorer(f1_score)}
         score_type_dct = {'precision':precision_score, 'recall':recall_score,
             'f1':f1_score}
         class_dct = {'ridge':RidgeClassifier(), 'rand_for_c':RandomForestClassifier(
@@ -408,20 +384,15 @@ def main():
             # y_pred = clf.predict(X_test)
 
             if args.data_source in ['gdsc', 'xeno']:
-                cv = KFold(n=len(drug_row), n_folds=int(args.num_folds),
-                    shuffle=True)
+                cv = KFold(n_splits=int(args.num_folds), shuffle=True)
             else:
-                cv = StratifiedKFold(y=drug_row, n_folds=int(args.num_folds),
-                    shuffle=True)
+                cv = StratifiedKFold(n_splits=int(args.num_folds), shuffle=True)
 
             drug_pred = cross_val_predict(clf, drug_ge_table, drug_row, cv=cv,
                 n_jobs=24)
 
             # Get the actual scores of CV.
             for score_name in score_type_dct:
-                # Repeat the classifier for num_rounds.
-                # for i in range(int(args.num_rounds)):
-                    # Kfold
                 key = (classifier_name, score_name)
                 if key not in score_dct:
                     score_dct[key] = np.array([])
@@ -431,16 +402,16 @@ def main():
                 else:
                     score = score_type_dct[score_name](drug_pred, drug_row, average='weighted')
                 score_dct[key] = np.append(score_dct[key], score)
-                # print(score_dct[key])
+                print(score_dct[key])
 
     # Write results out to file.
-    # out = open('./results/prediction_scores/%s_%s_%s_%s.txt' % (args.data_source,
-    #     args.num_rounds, args.method, args.num_folds), 'w')
     for key in score_dct:
         score_dct[key] = np.mean(score_dct[key])
     score_dct = pd.Series(score_dct).unstack()
-    score_dct.to_csv('./results/prediction_scores/%s_%s_%s_%s.csv' % (args.data_source,
-        args.num_rounds, args.method, args.num_folds))
+    fname = '%s_%s_%s' % (args.data_source, args.method, args.num_folds)
+    if args.method == 'essentiality':
+        fname += '_%s' % args.input_net.split('/')[-1]
+    score_dct.to_csv('./results/prediction_scores/%s.csv' % fname)
 
 if __name__ == '__main__':
     main()
