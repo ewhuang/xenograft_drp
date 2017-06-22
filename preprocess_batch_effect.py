@@ -19,14 +19,16 @@ tcga_folder = './data/TCGA'
 def generate_directories():
     for subfolder in ('gdsc_tcga', 'gdsc_tcga_Samples', 'gdsc_tcga_Models'):
         for pattern in ('./data/%s', './data/%s/before_combat',
-            './data/%s/after_combat', './data/%s/dr_matrices'):
+            './data/%s/after_combat', './data/%s/dr_matrices', './data/%s/single_drugs',
+            './data/%s/single_drugs/before_combat', './data/%s/single_drugs/after_combat',
+            './data/%s/single_drugs/batch_effect_plots'):
             folder = pattern % subfolder
             if not os.path.exists(folder):
                 os.makedirs(folder)
-    for folder in ('./data/single_drugs', './data/single_drugs/batch_effect_plots',
-        './data/single_drugs/before_combat', './data/single_drugs/after_combat'):
-        if not os.path.exists(folder):
-            os.makedirs(folder)
+    # for folder in ('./data/single_drugs', './data/single_drugs/batch_effect_plots',
+    #     './data/single_drugs/before_combat', './data/single_drugs/after_combat'):
+    #     if not os.path.exists(folder):
+    #         os.makedirs(folder)
 
 def listdir_fullpath(d):
     return [os.path.join(d, f) for f in os.listdir(d)]
@@ -289,10 +291,17 @@ def concatenate_expression_matrices(curr_drug, drugs_in_common=[]):
         for drug in drugs_in_common:
             tcga_drug_samples = tcga_drug_samples.union(tcga_drug_to_sample_dct[drug])
             gdsc_drug_samples = gdsc_drug_samples.union(gdsc_drug_to_sample_dct[drug])
+        # Get the Xenograft gene expression dataframe, if necessary.
+        if args.xeno_type != None:
+            xeno_drug_samples = set([])
+            for drug in drugs_in_common:
+                xeno_drug_samples = xeno_drug_samples.union(xeno_drug_to_sample_dct[drug])
     else:
         # For single drugs, get just the samples for the current drug.
         tcga_drug_samples = tcga_drug_to_sample_dct[curr_drug]
         gdsc_drug_samples = gdsc_drug_to_sample_dct[curr_drug]
+        if args.xeno_type != None:
+            xeno_drug_samples = xeno_drug_to_sample_dct[curr_drug]
 
     # Slice the tables based on the samples for the current drug.
     tcga_samples = list(tcga_drug_samples.intersection(list(tcga_table)))
@@ -300,16 +309,10 @@ def concatenate_expression_matrices(curr_drug, drugs_in_common=[]):
 
     gdsc_samples = list(gdsc_drug_samples.intersection(list(gdsc_table)))
     drug_gdsc_table = gdsc_table[gdsc_samples]
-
+    
     concat_table = [drug_tcga_table, drug_gdsc_table]
 
-    # Get the Xenograft gene expression dataframe, if necessary.
     if args.xeno_type != None:
-        assert curr_drug == 'all'
-        # Single drug mode not available for Xenograft data.
-        xeno_drug_samples = set([])
-        for drug in drugs_in_common:
-            xeno_drug_samples = xeno_drug_samples.union(xeno_drug_to_sample_dct[drug])
         xeno_samples = list(xeno_drug_samples.intersection(list(xeno_table)))
         drug_xeno_table = xeno_table[xeno_samples]
         concat_table += [drug_xeno_table]
@@ -374,7 +377,8 @@ def write_drug_matrices():
         xeno_drugs = xeno_drug_to_sample_dct.keys()
         # Further intersect drugs with Xenograft drugs.
         drugs_in_common = drugs_in_common.intersection(xeno_drugs)
-        df_tuple_lst += [(xeno_dr_df, 'xeno_dr_%s' % args.xeno_type)]
+        if args.drug_strat == 'all':
+            df_tuple_lst += [(xeno_dr_df, 'xeno_dr_%s' % args.xeno_type)]
 
     ### Next, get the gene expression information.
     # Get the TCGA gene expression dataframe.
@@ -394,7 +398,7 @@ def write_drug_matrices():
     if args.drug_strat == 'single':
         pool = Pool(processes=20)
         pool.map(concatenate_expression_matrices, drugs_in_common)
-    else:
+    elif args.drug_strat == 'all':
         sample_lst = concatenate_expression_matrices('all', drugs_in_common)
         write_drug_response_matrices(drugs_in_common, df_tuple_lst, sample_lst)
 
@@ -424,11 +428,21 @@ def write_pheno_file(drug):
 def plot_stitched_gene_expr(drug, when):
     assert when in ('before', 'after')
     mat = []
-    f = open('./data/single_drugs/%s_combat/%s_gene_expr_%s_combat.csv' % (when,
-        drug, when), 'r')
+    f = open('./data/%s/%s_combat/%s_gene_expr_%s_combat.csv' % (results_folder,
+        when, drug, when), 'r')
     it = reader(f)
     header = next(it)[1:]
-    colors = ['black' if '.txt' in sample else 'white' for sample in header]
+    # header = [col[1:] for col in header if col[0] == 'X']
+    header = [col[1:] if col[0] == 'X' else col for col in header]
+    # colors = ['black' if '.txt' in sample else 'white' for sample in header]
+    colors = []
+    for sample in header:
+        if '.txt' in sample:
+            colors += ['blue']
+        elif sample.isdigit():
+            colors += ['green']
+        else:
+            colors += ['black']
     for line in it:
         # Skip lines that are all NAs.
         if line[1:] == ['NA'] * len(header):
@@ -449,11 +463,11 @@ def plot_stitched_gene_expr(drug, when):
     x_points = [point[0] for point in mat]
     y_points = [point[1] for point in mat]
     # Plot resulting feature matrix.
-    plt.scatter(x=x_points, y=y_points, c=colors, s=20)
+    plt.scatter(x=x_points, y=y_points, c=colors, s=20, edgecolors='black')
     plt.show()
 
-    pylab.savefig('./data/single_drugs/batch_effect_plots/%s_%s_combat.png' %
-        (drug, when))
+    pylab.savefig('./data/%s/batch_effect_plots/%s_%s_combat.png' %
+        (results_folder, drug, when))
     plt.close()
 
 def separate_concat_mats():
@@ -464,6 +478,8 @@ def separate_concat_mats():
     table = pd.read_csv('./data/%s/after_combat/all_gene_expr_after_combat.csv' %
         results_folder, index_col=0)
     current_columns = list(table)
+    # Remove the leading X.
+    current_columns = [col[1:] for col in current_columns if col[0] == 'X']
     total_num_columns = 0 # Sanity check.
     # Write out the TCGA table.
     tcga_cols = [col for col in current_columns if '.txt' in col]
@@ -492,17 +508,15 @@ def parse_args():
     parser.add_argument('-x', '--xeno_type', help='type of xenograft data',
         choices=['Models', 'Samples'])
     args = parser.parse_args()
-    if args.xeno_type != None:
-        assert args.drug_strat == 'all'
 
 def parse_results_folder():
     global results_folder
-    if args.drug_strat == 'single':
-        results_folder = 'single_drugs'
-    elif args.xeno_type != None:
+    if args.xeno_type != None:
         results_folder = 'gdsc_tcga_%s' % args.xeno_type
     else:
         results_folder = 'gdsc_tcga'
+    if args.drug_strat == 'single':
+        results_folder += '/single_drugs'
 
 def main():
     parse_args()
