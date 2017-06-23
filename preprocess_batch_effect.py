@@ -32,6 +32,8 @@ def listdir_fullpath(d):
 def read_tcga_drug_response():
     '''
     Reads the TCGA drug response. Responses are categories.
+    For each drug, find the samples treated by that drug.
+    Returns a drug x sample response matrix.
     '''
     def read_tcga_spreadsheet(tcga_id_to_fname_dct, fname):
         '''
@@ -213,8 +215,11 @@ def read_tcga_gene_expr():
         for fname in listdir_fullpath(subfolder):
             if 'FPKM' in fname:
                 tcga_table = read_tcga_gene_expr_file(fname, tcga_table)
+    # Convert to numeric.
+    tcga_table = tcga_table.apply(pd.to_numeric)
+    # Remove NaNs.
+    tcga_table = tcga_table.dropna(axis=0, how='any')
     # At least 10% of genes must have value > 1 pre log-transformation.
-    # tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
     tcga_table = tcga_table.drop([idx for idx in tcga_table.index if (
         tcga_table.loc[idx]<1).astype(int).sum() > tcga_table.shape[1]*0.9], axis=0)
     # Add pseudo-counts to avoid NaN errors with log.
@@ -228,6 +233,10 @@ def read_gdsc_gene_expr():
     '''
     gdsc_table = pd.read_table('./data/GDSC/sanger1018_brainarray_ensemblgene_rma.txt',
         index_col=0, header=0)
+    # Convert to numeric.
+    gdsc_table = gdsc_table.apply(pd.to_numeric)
+    # Remove NaNs.
+    gdsc_table = gdsc_table.dropna(axis=0, how='any')
     return gdsc_table
 
 def read_hgnc_mappings():
@@ -260,7 +269,8 @@ def read_xeno_gene_expr():
             sample_list = line[1:]
             continue
         hgnc_id, expr_lst = line[0], line[1:]
-        if hgnc_id not in hgnc_to_ensg_dct:
+        # Skip genes that ahve NA in them.
+        if hgnc_id not in hgnc_to_ensg_dct or 'NA' in expr_lst:
             continue
         ensg_id_set = hgnc_to_ensg_dct[hgnc_id]
         # HGNC ids might amap to multiple ENSG ids.
@@ -275,6 +285,8 @@ def read_xeno_gene_expr():
     # Convert the expression matrix to a dataframe.
     xeno_table = pd.DataFrame(data=np.array(xeno_expr_matrix), index=gene_list,
         columns=sample_list)
+    # Convert to numeric.
+    xeno_table = xeno_table.apply(pd.to_numeric)
     return xeno_table
 
 def concatenate_expression_matrices(curr_drug, drugs_in_common=[]):
@@ -430,9 +442,8 @@ def plot_stitched_gene_expr(drug, when):
         when, drug, when), 'r')
     it = reader(f)
     header = next(it)[1:]
-    # header = [col[1:] for col in header if col[0] == 'X']
+    # Remove initial X placed there by ComBat.
     header = [col[1:] if col[0] == 'X' else col for col in header]
-    # colors = ['black' if '.txt' in sample else 'white' for sample in header]
     colors = []
     for sample in header:
         if '.txt' in sample:
@@ -445,7 +456,8 @@ def plot_stitched_gene_expr(drug, when):
         # Skip lines that are all NAs.
         if line[1:] == ['NA'] * len(header):
             continue
-        line = map(float, [0 if expr == '' else expr for expr in line[1:]])
+        # line = map(float, [0 if expr == '' else expr for expr in line[1:]])
+        line = map(float, line[1:])
         assert len(colors) == len(line)
         mat += [line]
     f.close()
