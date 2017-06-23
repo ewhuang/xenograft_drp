@@ -442,8 +442,6 @@ def plot_stitched_gene_expr(drug, when):
         when, drug, when), 'r')
     it = reader(f)
     header = next(it)[1:]
-    # Remove initial X placed there by ComBat.
-    header = [col[1:] if col[0] == 'X' else col for col in header]
     colors = []
     for sample in header:
         if '.txt' in sample:
@@ -456,7 +454,6 @@ def plot_stitched_gene_expr(drug, when):
         # Skip lines that are all NAs.
         if line[1:] == ['NA'] * len(header):
             continue
-        # line = map(float, [0 if expr == '' else expr for expr in line[1:]])
         line = map(float, line[1:])
         assert len(colors) == len(line)
         mat += [line]
@@ -526,6 +523,45 @@ def parse_results_folder():
     if args.drug_strat == 'single':
         results_folder += '/single_drugs'
 
+def get_col_row_names(fname):
+    '''
+    Given an fname, return the column and row names in two lists.
+    '''
+    table = pd.read_csv(fname, index_col = 0)
+    column_list = list(table)
+    row_list = table.index.values
+    return column_list, row_list
+
+def check_matrix_alignment():
+    # Sanity check for GDSC.
+    gdsc_expr_samples, gdsc_expr_genes = get_col_row_names(
+        './data/%s/gdsc_expr_postCB.csv' % results_folder)
+    gdsc_dr_samples, gdsc_drugs = get_col_row_names(
+        './data/%s/dr_matrices/gdsc_dr.csv' % results_folder)
+    assert gdsc_expr_samples == gdsc_dr_samples
+    # Sanity check for TCGA.
+    tcga_expr_samples, tcga_expr_genes = get_col_row_names(
+        './data/%s/tcga_expr_postCB.csv' % results_folder)
+    tcga_dr_samples, tcga_drugs = get_col_row_names(
+        './data/%s/dr_matrices/tcga_dr.csv' % results_folder)
+    assert tcga_expr_samples == tcga_dr_samples
+    
+    # Check TCGA and GDSC genes are the same.
+    assert np.array_equal(gdsc_expr_genes, tcga_expr_genes)
+    assert np.array_equal(gdsc_drugs, tcga_drugs)
+
+    if args.xeno_type != None:
+        xeno_expr_samples, xeno_expr_genes = get_col_row_names(
+            './data/%s/xeno_%s_expr_postCB.csv' % (results_folder,
+            args.xeno_type))
+        xeno_dr_samples, xeno_drugs = get_col_row_names(
+            './data/%s/dr_matrices/xeno_dr_%s.csv' % (results_folder,
+            args.xeno_type))
+        assert xeno_expr_samples == xeno_dr_samples
+        # Check genes.
+        assert np.array_equal(tcga_expr_genes, xeno_expr_genes)
+    assert np.array_equal(tcga_drugs, xeno_drugs)
+
 def main():
     parse_args()
     parse_results_folder()
@@ -549,6 +585,9 @@ def main():
             plot_stitched_gene_expr(drug, 'after')
     else:
         separate_concat_mats()
+        
+    # Sanity checks.
+    check_matrix_alignment()
 
 if __name__ == '__main__':
     main()
