@@ -138,7 +138,7 @@ def read_gdsc_drug_response():
     gdsc_dr_df = pd.Series(gdsc_dr_dct).unstack()
     return gdsc_drug_to_sample_dct, gdsc_dr_df
 
-def read_xeno_drug_response():
+def read_xeno_drug_response(xeno_type):
     '''
     Maps each drug to the cell lines that have response values for that drug.
     '''
@@ -172,13 +172,13 @@ def read_xeno_drug_response():
     assert drug_translation_dct['GSK2118436'] == 'dabrafenib'
 
     xeno_drug_to_sample_dct, xeno_dr_dct = {}, {}
-    f = open('./data/Xenograft2/DrugResponsesAUC%s.txt' % args.xeno_type, 'r')
+    f = open('./data/Xenograft2/DrugResponsesAUC%s.txt' % xeno_type, 'r')
     f.readline() # Skip the header line.
     for line in f:
         line = line.strip().split('\t')
-        if args.xeno_type == 'Models':
+        if xeno_type == 'Models':
             sample, drug, ic50 = line[0], line[1], line[3]
-        elif args.xeno_type == 'Samples':
+        elif xeno_type == 'Samples':
             sample, drug, ic50 = line[0], line[2], line[4]
         assert '.txt' not in sample and not sample.isdigit()
 
@@ -255,21 +255,21 @@ def read_hgnc_mappings():
     f.close()
     return hgnc_to_ensg_dct
 
-def read_xeno_gene_expr():
+def read_xeno_gene_expr(xeno_type):
     '''
     Returns a dataframe.
     '''
     hgnc_to_ensg_dct = read_hgnc_mappings()
     # Read the gene expression file.
     xeno_expr_matrix, gene_list = [], []
-    f = open('./data/Xenograft2/Expression%s.txt' % args.xeno_type, 'r')
+    f = open('./data/Xenograft2/Expression%s.txt' % xeno_type, 'r')
     for i, line in enumerate(f):
         line = line.split()
         if i == 0: # Process header line.
             sample_list = line[1:]
             continue
         hgnc_id, expr_lst = line[0], line[1:]
-        # Skip genes that ahve NA in them.
+        # Skip genes that have NA in them.
         if hgnc_id not in hgnc_to_ensg_dct or 'NA' in expr_lst:
             continue
         ensg_id_set = hgnc_to_ensg_dct[hgnc_id]
@@ -383,7 +383,7 @@ def write_drug_matrices():
     # Get the Xenograft information, if required.
     if args.xeno_type != None:
         global xeno_drug_to_sample_dct
-        xeno_drug_to_sample_dct, xeno_dr_df = read_xeno_drug_response()
+        xeno_drug_to_sample_dct, xeno_dr_df = read_xeno_drug_response(args.xeno_type)
         xeno_drugs = xeno_drug_to_sample_dct.keys()
         # Further intersect drugs with Xenograft drugs.
         drugs_in_common = drugs_in_common.intersection(xeno_drugs)
@@ -400,7 +400,7 @@ def write_drug_matrices():
     # Get the Xenograft gene expression dataframe, if required.
     if args.xeno_type != None:
         global xeno_table
-        xeno_table = read_xeno_gene_expr()
+        xeno_table = read_xeno_gene_expr(args.xeno_type)
 
     # Turn drugs into a list for ordering.
     drugs_in_common = list(drugs_in_common)
@@ -492,12 +492,12 @@ def separate_concat_mats():
     # Write out the TCGA table.
     tcga_cols = [col for col in current_columns if '.txt' in col]
     tcga_table = table[tcga_cols]
-    tcga_table.to_csv('./data/%s/tcga.csv' % results_folder)
+    tcga_table.to_csv('./data/%s/tcga_expr_postCB.csv' % results_folder)
     total_num_columns += len(list(tcga_table))
     # Write out the GDSC table.
     gdsc_cols = [col for col in current_columns if col[1:].isdigit()]
     gdsc_table = table[gdsc_cols]
-    gdsc_table.to_csv('./data/%s/gdsc.csv' % results_folder)
+    gdsc_table.to_csv('./data/%s/gdsc_expr_postCB.csv' % results_folder)
     total_num_columns += len(list(gdsc_table))
 
     if args.xeno_type != None:
@@ -505,7 +505,7 @@ def separate_concat_mats():
             not col[1:].isdigit())]
         xeno_table = table[xeno_cols]
         total_num_columns += len(list(xeno_table))
-        xeno_table.to_csv('./data/%s/xeno_%s.csv' % (results_folder, args.xeno_type))
+        xeno_table.to_csv('./data/%s/xeno_%s_expr_postCB.csv' % (results_folder, args.xeno_type))
     assert total_num_columns == len(current_columns)
 
 def parse_args():
