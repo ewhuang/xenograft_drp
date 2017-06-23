@@ -25,10 +25,6 @@ def generate_directories():
             folder = pattern % subfolder
             if not os.path.exists(folder):
                 os.makedirs(folder)
-    # for folder in ('./data/single_drugs', './data/single_drugs/batch_effect_plots',
-    #     './data/single_drugs/before_combat', './data/single_drugs/after_combat'):
-    #     if not os.path.exists(folder):
-    #         os.makedirs(folder)
 
 def listdir_fullpath(d):
     return [os.path.join(d, f) for f in os.listdir(d)]
@@ -218,7 +214,9 @@ def read_tcga_gene_expr():
             if 'FPKM' in fname:
                 tcga_table = read_tcga_gene_expr_file(fname, tcga_table)
     # At least 10% of genes must have value > 1 pre log-transformation.
-    tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
+    # tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
+    tcga_table = tcga_table.drop([idx for idx in tcga_table.index if (
+        tcga_table.loc[idx]<1).astype(int).sum() > tcga_table.shape[1]*0.9], axis=0)
     # Add pseudo-counts to avoid NaN errors with log.
     tcga_table = tcga_table.add(0.1)
     # Log 2 transform just the TCGA matrix.
@@ -232,26 +230,26 @@ def read_gdsc_gene_expr():
         index_col=0, header=0)
     return gdsc_table
 
+def read_hgnc_mappings():
+    hgnc_to_ensg_dct = {}
+    f = open('./data/hgnc_to_ensg.txt','r')
+    f.readline()
+    for line in f:
+        line = line.split()
+        if len(line) != 2:
+            continue
+        ensg_id, hgnc_symbol = line
+        # Update the mapping dictionary.
+        if hgnc_symbol not in hgnc_to_ensg_dct:
+            hgnc_to_ensg_dct[hgnc_symbol] = set([])
+        hgnc_to_ensg_dct[hgnc_symbol].add(ensg_id)
+    f.close()
+    return hgnc_to_ensg_dct
+
 def read_xeno_gene_expr():
     '''
     Returns a dataframe.
     '''
-    def read_hgnc_mappings():
-        hgnc_to_ensg_dct = {}
-        f = open('./data/hgnc_to_ensg.txt','r')
-        f.readline()
-        for line in f:
-            line = line.split()
-            if len(line) != 2:
-                continue
-            ensg_id, hgnc_symbol = line
-            # Update the mapping dictionary.
-            if hgnc_symbol not in hgnc_to_ensg_dct:
-                hgnc_to_ensg_dct[hgnc_symbol] = set([])
-            hgnc_to_ensg_dct[hgnc_symbol].add(ensg_id)
-        f.close()
-        return hgnc_to_ensg_dct
-
     hgnc_to_ensg_dct = read_hgnc_mappings()
     # Read the gene expression file.
     xeno_expr_matrix, gene_list = [], []
@@ -478,8 +476,6 @@ def separate_concat_mats():
     table = pd.read_csv('./data/%s/after_combat/all_gene_expr_after_combat.csv' %
         results_folder, index_col=0)
     current_columns = list(table)
-    # Remove the leading X.
-    current_columns = [col[1:] for col in current_columns if col[0] == 'X']
     total_num_columns = 0 # Sanity check.
     # Write out the TCGA table.
     tcga_cols = [col for col in current_columns if '.txt' in col]
