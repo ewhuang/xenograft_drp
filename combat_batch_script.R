@@ -21,11 +21,12 @@ change.files <- function(folder, drug){
     # data(bladderdata)
     # edata = exprs(bladderEset)
     # pheno = pData(bladderEset)
-    edata = read.csv(paste('./data/', folder, '/before_combat/', drug, '_gene_expr_before_combat.csv', sep=''))
+    edata = read.csv(paste('./data/', folder, '/before_combat/', drug, '_gene_expr_before_combat.csv', sep=''),
+    check.names=FALSE)
     edata2 <- edata[,-1]
     rownames(edata2)<-edata[,1]
     pheno = read.table(file=paste('./data/', folder, '/before_combat/', drug, '_pheno.txt', sep=''),
-        sep = '\t', header = TRUE)
+        sep = '\t', header = TRUE, check.names=FALSE)
     pheno2 <- pheno[,-1]
     rownames(pheno2)<-pheno[,1]
 
