@@ -6,19 +6,14 @@ from multiprocessing import Pool
 import numpy as np
 import os
 import pandas as pd
+import preprocess_batch_effect
 from scipy.stats import *
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.metrics import f1_score, precision_score, recall_score
-# from sklearn.cross_validation import cross_val_predict, KFold, StratifiedKFold
-from sklearn.model_selection import cross_val_predict, KFold, StratifiedKFold
 from sklearn.linear_model import RidgeClassifier, Ridge, ElasticNet, Lasso, Lars, LogisticRegression
+from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.model_selection import cross_val_predict, KFold, StratifiedKFold
 from sklearn.svm import SVR, SVC
-
-#Xenograft gao, biobank
-#GDSC, TCGA
-#classification: F1,precision,recall
-#regression: spearman correlation, c_index
-#net = np.zeros((ngene,ngene)),net[i,j]=1 #i\tj 
+import warnings
 
 ### Script for predicting k-fold CV on each of three datasets: xenograft2,
 ### GDSC, and TCGA, on gene essentiality scores.
@@ -28,235 +23,6 @@ def generate_directories():
         if not os.path.exists(folder):
             os.makedirs(folder)
 
-def listdir_fullpath(d):
-    return [os.path.join(d, f) for f in os.listdir(d)]
-
-def read_hgnc_mappings():
-    '''
-    Returns a dictionary mapping HGNC symbols to sets of ENSG IDs.
-    '''
-    hgnc_to_ensg_dct = {}
-    f = open('./data/hgnc_to_ensg.txt','r')
-    f.readline() # Skip the header line.
-    for line in f:
-        line = line.split()
-        if len(line) != 2:
-            continue
-        ensg_id, hgnc_symbol = line
-        # Update the mapping dictionary.
-        if hgnc_symbol not in hgnc_to_ensg_dct:
-            hgnc_to_ensg_dct[hgnc_symbol] = set([])
-        hgnc_to_ensg_dct[hgnc_symbol].add(ensg_id)
-    f.close()
-    return hgnc_to_ensg_dct
-
-def read_gdsc_drug_response():
-    '''
-    Maps each drug to the cell lines that have response values for that drug.
-    The drug response dictionary creates a dataframe of a drug x sample matrix.
-    '''
-    def read_drug_id_to_name_dct():
-        '''
-        Maps drug IDs to their names for the GDSC data.
-        '''
-        drug_id_to_name_dct = {}
-        f = open('./data/GDSC/Screened_Compounds.txt', 'r')
-        f.readline() # Skip the header line.asss
-        for line in f:
-            line = line.strip().split('\t')
-            assert len(line) == 5
-            drug_id, drug_name = line[:2]
-            assert drug_id not in drug_id_to_name_dct
-            drug_id_to_name_dct[drug_id] = drug_name.lower()
-        f.close()
-        return drug_id_to_name_dct
-
-    drug_id_to_name_dct = read_drug_id_to_name_dct()
-    # Simple tests.
-    assert drug_id_to_name_dct['1'] == 'erlotinib'
-    assert drug_id_to_name_dct['172'] == 'embelin'
-
-    gdsc_dr_dct = {}
-    f = open('./data/GDSC/v17_fitted_dose_response.txt', 'r')
-    f.readline() # Skip the header line.
-    for line in f:
-        line = line.strip().split('\t')
-        sample_id, drug_id, ln_ic50 = line[2], line[3], line[5]
-        assert sample_id.isdigit()
-        # Skip unmappable drugs.
-        if drug_id not in drug_id_to_name_dct:
-            continue
-        drug_name = drug_id_to_name_dct[drug_id]
-
-        # Update the drug response dictionary.
-        key = ('%s_%s' % (drug_name, drug_id), sample_id)
-        assert key not in gdsc_dr_dct
-        gdsc_dr_dct[key] = float(ln_ic50)
-    f.close()
-    # Now, convert the drug response dictionary to a dataframe.
-    gdsc_dr_df = pd.Series(gdsc_dr_dct).unstack()
-    return gdsc_dr_df
-
-def read_tcga_drug_response():
-    '''
-    Reads the TCGA drug response.
-    '''
-    def read_tcga_spreadsheet(tcga_id_to_fname_dct, fname):
-        '''
-        Returns a dictionary mapping the sample filenames to their TCGA sample IDs.
-        Key: sample filename -> str, e.g., 010caf19-9f62-4488-a2b5-eacdb795d66e.FPKM.txt
-        Value: sample ID -> str, e.g., TCGA-OR-A5KT-01
-        '''
-        f = open(fname, 'r')
-        for sample_fname, sample_type, sample_id, race, cancer in csv.reader(f):
-            # Only use samples that are primary tumors.
-            if sample_type != 'Primary Tumor':
-                continue
-            # Exclude the number suffix ('-01') in the sample IDs.
-            sample_id = '-'.join(sample_id.split('-')[:-1])
-            assert sample_id not in tcga_id_to_fname_dct
-            tcga_id_to_fname_dct[sample_id] = sample_fname
-        f.close()
-
-    # First, get mappings from filenames to sample IDs.
-    tcga_id_to_fname_dct = {}
-    for subfolder in listdir_fullpath('./data/TCGA/RNAseq'):
-        for fname in listdir_fullpath(subfolder):
-            if 'Pheno_All' in fname:
-                read_tcga_spreadsheet(tcga_id_to_fname_dct, fname)
-    # Simple tests.
-    assert tcga_id_to_fname_dct['TCGA-G9-7522'] == '3a8adea5-5520-41de-aed8-dfce2d52386e.FPKM.txt'
-    assert tcga_id_to_fname_dct['TCGA-HU-A4GF'] == '1e46ba47-0a66-4f70-b508-c619c6129e33.FPKM.txt'
-
-    # Read the drug response file.
-    tcga_dr_dct = {}
-    f = open('./data/TCGA/drug_response.txt', 'r')
-    f.readline() # Skip the header line.
-    for line in f:
-        line = line.strip().split('\t')
-        sample_id, drug, response = line[1], line[2].lower(), line[4]
-        # Skip samples that are not primary tumors.
-        if sample_id not in tcga_id_to_fname_dct:
-            continue
-        sample_fname = tcga_id_to_fname_dct[sample_id]
-        assert '.txt' in sample_fname
-
-        # Update the drug response dictionary.
-        tcga_dr_dct[(drug, sample_fname)] = response
-    f.close()
-    # Convert drug response dictionary to dataframe.
-    tcga_dr_df = pd.Series(tcga_dr_dct).unstack()
-    return tcga_dr_df
-
-def read_xeno_drug_response():
-    '''
-    Maps each drug to the cell lines that have response values for that drug.
-    '''
-    def read_gdsc_translation():
-        '''
-        Reads the drugs the Xenograft has in common with GDSC.
-        '''
-        drug_translation_dct = {}
-        f = open('./data/Data_summary.txt', 'r')
-        f.readline()
-        for line in f:
-            line = line.strip().split('\t')
-            if len(line) != 3:
-                continue
-            drug, gdsc, xenograft = line
-            # Skip drugs that do not exist for both datasets.
-            if 'Y' not in gdsc or 'Y' not in xenograft:
-                continue
-            if '(' not in xenograft:
-                drug_translation_dct[drug] = drug.lower()
-            else:
-                drug_translation_dct[xenograft.split()[1][1:-1]] = drug.lower()
-        f.close()
-        return drug_translation_dct
-
-    drug_translation_dct = read_gdsc_translation()
-    # Simple tests.
-    assert 'Cetuximab' not in drug_translation_dct
-    assert 'cetuximab' not in drug_translation_dct
-    assert drug_translation_dct['GSK2118436'] == 'dabrafenib'
-
-    xeno_dr_dct = {}
-    f = open('./data/Xenograft2/DrugResponsesAUCModels.txt', 'r')
-    f.readline() # Skip the header line.
-    for line in f:
-        line = line.strip().split('\t')
-        sample, drug, ic50 = line[0], line[1], np.log(float(line[3]))
-        assert '.txt' not in sample and not sample.isdigit()
-
-        # Skip drugs that are not also in GDSC.
-        if drug not in drug_translation_dct:
-            continue
-        drug = drug_translation_dct[drug]
-
-        # Update the drug response dictionary.
-        key = (drug, sample)
-        assert key not in xeno_dr_dct
-        xeno_dr_dct[key] = ic50
-    f.close()
-    # Now, convert drug response dictionary to a dataframe.
-    xeno_dr_df = pd.Series(xeno_dr_dct).unstack()
-    return xeno_dr_df
-
-def get_tcga_ge_table():    
-    def read_tcga_gene_expr_file(fname, gene_expr_table):
-        '''
-        Reads a gene x sample matrix. Contains many zeros.
-        '''
-        table = pd.read_csv(fname, index_col=0)
-        ret = pd.concat([gene_expr_table, table], axis=1)
-        return ret
-        
-    tcga_table = pd.DataFrame()
-    for subfolder in listdir_fullpath('./data/TCGA/RNAseq'):
-        for fname in listdir_fullpath(subfolder):
-            if 'FPKM' in fname:
-                tcga_table = read_tcga_gene_expr_file(fname, tcga_table)
-    # Log 2 transform just the TCGA matrix.
-    tcga_table = tcga_table[tcga_table<1].dropna(thresh=tcga_table.shape[1]*0.9)
-    tcga_table = tcga_table.add(0.1) # Add pseudo-counts to avoid NaN errors.
-    return np.log2(tcga_table)
-
-def read_xeno_gene_expr():
-    '''
-    Returns a dataframe.
-    '''
-    # Read the gene expression file.
-    xeno_expr_matrix, gene_list = [], []
-    f = open('./data/Xenograft2/ExpressionModels.txt', 'r')
-    for i, line in enumerate(f):
-        line = line.split()
-        if i == 0: # Process header line.
-            sample_list = line[1:]
-            continue
-        hgnc_id, expr_lst = line[0], line[1:]
-        if hgnc_id not in hgnc_to_ensg_dct or 'NA' in expr_lst:
-            continue
-        ensg_id_set = hgnc_to_ensg_dct[hgnc_id]
-        # HGNC ids might amap to multiple ENSG ids.
-        for ensg_id in ensg_id_set:
-            if ensg_id in gene_list:
-                continue
-            # Update the gene list.
-            gene_list += [ensg_id]
-            xeno_expr_matrix += [expr_lst]
-    f.close()
-
-    # Convert the expression matrix to a dataframe.
-    xeno_table = pd.DataFrame(data=np.array(xeno_expr_matrix), index=gene_list,
-        columns=sample_list)
-    # xeno_table.replace({'NA':np.nan}, inplace=True)
-    # xeno_table.dropna(axis=0, how='any', inplace=True)
-    xeno_table = xeno_table[xeno_table<1].dropna(thresh=xeno_table.shape[1]*0.9)
-    xeno_table = xeno_table.convert_objects(convert_numeric=True)
-    return xeno_table
-
-# def read_gene_network(gene_df, gene_list, fname):
-# def read_gene_network(gene_net, gene_list, fname):
 def read_gene_network(fname):
     '''
     Reads the gene-to-gene network, and converts it into a numpy matrix, where
@@ -265,7 +31,7 @@ def read_gene_network(fname):
     edge_dct = {}
     f = open(fname, 'r')
     for line in f:
-        gene_i, gene_j = line.split()
+        gene_i, gene_j = line.split()[:2]
         # # Skip genes that do not have valid ENSG mappings.
         if gene_i not in hgnc_to_ensg_dct or gene_j not in hgnc_to_ensg_dct:
             continue
@@ -301,25 +67,38 @@ def parse_args():
     parser.add_argument('-f', '--num_folds', help='Number of folds.', required=True)
     return parser.parse_args()
 
-def main():
-    args = parse_args()
-    generate_directories()
+def get_classifier_dct(data_source):
+    '''
+    Given the type of data, produce classifiers/regressions. TCGA gets classifiers.
+    '''
+    # This spearmanr only returns the correlation, not the p-value.
+    if data_source in ['gdsc', 'xeno']:
+        score_type_dct = {'spearman':lambda x, y: stats.spearmanr(x, y)[0]}
+        clf_dct = {'elastic':ElasticNet(l1_ratio=0.15),
+            'rand_for_r':RandomForestRegressor(max_depth=5,
+                min_samples_split=0.05, n_estimators=100),
+            'linear_svm':SVR(kernel='linear'), 'rbf_svr':SVR(),
+            'poly_svr':SVR(kernel='poly'), 'sigmod_svr':SVR(kernel='sigmoid')}
+    elif data_source == 'tcga':
+        score_type_dct = {'precision':precision_score, 'recall':recall_score, 'f1':f1_score}
+        clf_dct = {'ridge':RidgeClassifier(), 'rand_for_c':RandomForestClassifier(
+            max_depth=5, min_samples_split=0.05, n_estimators=100),
+            'linear_svc':SVC(kernel='linear'), 'poly_svc':SVC(kernel='poly'),
+            'sigmod_svc':SVC(kernel='sigmoid'),'logit':LogisticRegression()}
+    return score_type_dct, clf_dct
 
-    global hgnc_to_ensg_dct
-    hgnc_to_ensg_dct = read_hgnc_mappings()
-
+def train_classifiers(input_net, data_source, method, num_folds, xeno_type):
     # Gene expression table must be gene x sample DataFrame.
     # Drug response table must be a drug x sample DataFrame.
-    if args.data_source == 'gdsc':
-        gdsc_ge_fname = './data/GDSC/sanger1018_brainarray_ensemblgene_rma.txt'
-        ge_table = pd.read_table(gdsc_ge_fname, index_col=0, header=0)
-        dr_table = read_gdsc_drug_response()
-    elif args.data_source == 'tcga':
-        ge_table = get_tcga_ge_table()
-        dr_table = read_tcga_drug_response()
-    elif args.data_source == 'xeno':
-        ge_table = read_xeno_gene_expr()
-        dr_table = read_xeno_drug_response()
+    if data_source == 'gdsc':
+        ge_table = preprocess_batch_effect.read_gdsc_gene_expr()
+        dr_table = preprocess_batch_effect.read_gdsc_drug_response()[1]
+    elif data_source == 'tcga':
+        ge_table = preprocess_batch_effect.read_tcga_gene_expr()
+        dr_table = preprocess_batch_effect.read_tcga_drug_response()[1]
+    elif data_source == 'xeno':
+        ge_table = preprocess_batch_effect.read_xeno_gene_expr(xeno_type)
+        dr_table = preprocess_batch_effect.read_xeno_drug_response(xeno_type)[1]
 
     print(ge_table.shape, dr_table.shape)
 
@@ -332,86 +111,91 @@ def main():
 
     print(ge_table.shape, dr_table.shape)
 
-    if args.method == 'essentiality':
+    if method == 'essentiality':
         # essentiality mode requires an input network.
-        assert args.input_net != None and os.path.exists(args.input_net)
+        assert input_net != None and os.path.exists(input_net)
         gene_df = pd.DataFrame([], index=ge_gene_list, columns=ge_gene_list)
-        edge_dct = read_gene_network(args.input_net)
+        edge_dct = read_gene_network(input_net)
         gene_df = gene_df.fillna(pd.Series(edge_dct).unstack())
         gene_df = gene_df.fillna(value=0)
         print('done filling missing values')
         ge_table = compute_essential(ge_table, gene_df.as_matrix())
+
     print('finished reading')
-    # Predict on drug response. GDSC needs regression.
-    # This spearmanr only returns the correlation, not the p-value.
-    if args.data_source in ['gdsc', 'xeno']:
-        score_type_dct = {'spearman':lambda x, y: stats.spearmanr(x, y)[0]}
-        class_dct = {'ridge':Ridge(), 'lasso':Lasso(),'elastic':ElasticNet(
-            l1_ratio=0.15), 'lars':Lars(), 'rand_for_r':RandomForestRegressor(
-            max_depth=5, min_samples_split=0.05), 'linear_svm':SVR(
-            kernel='linear'), 'rbf_svr':SVR()}
-    elif args.data_source == 'tcga':
-        score_type_dct = {'precision':precision_score, 'recall':recall_score,
-            'f1':f1_score}
-        class_dct = {'ridge':RidgeClassifier(), 'rand_for_c':RandomForestClassifier(
-            max_depth=5, min_samples_split=0.05), 'linear_svc':SVC(
-            kernel='linear'), 'rbf_svc':SVC(), 'logit':LogisticRegression()}
+
+    score_type_dct, clf_dct = get_classifier_dct(data_source)
 
     score_dct = {}
-    # TODO: these are the 14 drugs across all three datasets.
-    all_drug_lst = ['bicalutamide', 'cisplatin', 'dabrafenib', 'docetaxel', 'erlotinib', 'gefitinib', 'lapatinib', 'paclitaxel', 'sorafenib', 'tamoxifen', 'temozolomide', 'trametinib', 'vinblastine']
-
-    for classifier_name in class_dct:
+    print('start training')
+    for classifier_name in clf_dct:
         # Get the classifier object.
-        clf = class_dct[classifier_name]
+        clf = clf_dct[classifier_name]
         for drug_idx, drug_row in enumerate(dr_table):
-            if dr_drug_list[drug_idx].split('_')[0] not in all_drug_lst:
-                continue
+            drug_name = dr_drug_list[drug_idx]
             # Get the non-NaN indices.
-            if args.data_source in ['gdsc', 'xeno']:
+            if data_source in ['gdsc', 'xeno']:
                 nan_idx_lst = [i for i, e in enumerate(drug_row) if not np.isnan(e)]
             else:
                 nan_idx_lst = [i for i, e in enumerate(drug_row) if e != None]
 
             drug_row, drug_ge_table = drug_row[nan_idx_lst], ge_table[nan_idx_lst]
             # Skip drugs with very few drug responses.
-            if len(drug_row) < 5:
+            if len(drug_row) < num_folds or (data_source == 'tcga' and
+                len(set(drug_row)) == 1):
                 continue
 
-            # X_train, X_test, y_train, y_test = train_test_split(drug_ge_table, drug_row, test_size=0.2, random_state=0)
-            # clf.fit(X_train, y_train)
-
-            # y_pred = clf.predict(X_test)
-
-            if args.data_source in ['gdsc', 'xeno']:
-                cv = KFold(n_splits=int(args.num_folds), shuffle=True)
+            if data_source in ['gdsc', 'xeno']:
+                cv = KFold(n_splits=int(num_folds), shuffle=True)
             else:
-                cv = StratifiedKFold(n_splits=int(args.num_folds), shuffle=True)
-
-            drug_pred = cross_val_predict(clf, drug_ge_table, drug_row, cv=cv,
-                n_jobs=24)
+                cv = StratifiedKFold(n_splits=int(num_folds), shuffle=True)
+            
+            try:
+                drug_pred = cross_val_predict(clf, drug_ge_table, drug_row, cv=cv,
+                    n_jobs=24)
+            except ValueError:
+                continue
 
             # Get the actual scores of CV.
             for score_name in score_type_dct:
-                key = (classifier_name, score_name)
-                if key not in score_dct:
-                    score_dct[key] = np.array([])
+                key = (classifier_name, score_name, drug_name) # TODO key?
+                assert key not in score_dct
                 # TODO: stratified kfold for classifier?
-                if args.data_source in ['gdsc', 'xeno']:
+                if data_source in ['gdsc', 'xeno']:
                     score = score_type_dct[score_name](drug_pred, drug_row)
                 else:
                     score = score_type_dct[score_name](drug_pred, drug_row, average='weighted')
-                score_dct[key] = np.append(score_dct[key], score)
-                print(score_dct[key])
+                # score_dct[key] = np.append(score_dct[key], score)
+                score_dct[key] = score
 
-    # Write results out to file.
-    for key in score_dct:
-        score_dct[key] = np.mean(score_dct[key])
     score_dct = pd.Series(score_dct).unstack()
-    fname = '%s_%s_%s' % (args.data_source, args.method, args.num_folds)
-    if args.method == 'essentiality':
-        fname += '_%s' % args.input_net.split('/')[-1]
+    fname = '%s_%s_%s' % (data_source, method, num_folds)
+    if method == 'essentiality':
+        fname += '_%s' % input_net.split('/')[-1]
     score_dct.to_csv('./results/prediction_scores/%s.csv' % fname)
 
+def main():
+    generate_directories()
+    global hgnc_to_ensg_dct
+    hgnc_to_ensg_dct = preprocess_batch_effect.read_hgnc_mappings()
+
+    # TODO: turning off warnings.
+    warnings.filterwarnings('ignore')
+
+    net_dir = 'data/CRISPR_networks/'
+    net_dir = 'data/baseline_networks/'
+    network_l = os.listdir(net_dir)
+    data_l = ['xeno','tcga','gdsc']
+    method_l = ['baseline']
+    num_folds = 5
+    xeno_type = 'Models'
+    # for net in network_l:
+    for net in ['net']: # TODO
+        input_net = net_dir + net
+        print('running network'+net)
+        for data_source in data_l:
+            for method in method_l:
+                print(data_source, method)
+                train_classifiers(input_net, data_source, method, num_folds, xeno_type)
+
 if __name__ == '__main__':
-    main()
+    main()  
