@@ -560,7 +560,7 @@ def check_matrix_alignment():
         assert xeno_expr_samples == xeno_dr_samples
         # Check genes.
         assert np.array_equal(tcga_expr_genes, xeno_expr_genes)
-    assert np.array_equal(tcga_drugs, xeno_drugs)
+        assert np.array_equal(tcga_drugs, xeno_drugs)
 
 def main():
     parse_args()
