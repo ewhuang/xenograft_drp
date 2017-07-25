@@ -21,13 +21,41 @@ def generate_directories():
         for pattern in ('./data/%s', './data/%s/before_combat',
             './data/%s/after_combat', './data/%s/dr_matrices', './data/%s/single_drugs',
             './data/%s/single_drugs/before_combat', './data/%s/single_drugs/after_combat',
-            './data/%s/single_drugs/batch_effect_plots'):
+            './data/%s/single_drugs/batch_effect_plots', './data/%s/batch_effect_plots'):
             folder = pattern % subfolder
             if not os.path.exists(folder):
                 os.makedirs(folder)
 
 def listdir_fullpath(d):
     return [os.path.join(d, f) for f in os.listdir(d)]
+
+def build_ppi_network(gdsc_expr_genes):
+    '''
+    Builds an nxn PPI network from the STRING experimental file.
+    '''
+    ppi_df = pd.DataFrame(index=gdsc_expr_genes, columns=gdsc_expr_genes)
+    ppi_dct = {}
+    f = open('./data/STRING_experimental_KN02.csv', 'r')
+    f.readline()
+    for line in reader(f):
+        protein_a, protein_b, weight, edge_type = line
+        weight = float(weight)
+        # # Update the PPI dictionary.
+        # Edges are already repeated in the file.
+        ppi_dct[(protein_a, protein_b)] = weight
+    f.close()
+    
+    # Fille diagonal with 1s.
+    for gene in gdsc_expr_genes:
+        ppi_dct[(gene, gene)] = 1
+    
+    ppi_df = ppi_df.fillna(pd.Series(ppi_dct).unstack())
+    ppi_df = ppi_df.fillna(value=0)
+    # # Get only genes from GDSC genes.
+    # ppi_df = ppi_df[gdsc_expr_genes]
+    # ppi_df = ppi_df.reindex(gdsc_expr_genes)
+    
+    ppi_df.to_csv('./data/%s/STRING_experimental_KN02_table.csv' % results_folder)
 
 def read_tcga_drug_response():
     '''
@@ -53,6 +81,7 @@ def read_tcga_drug_response():
         f.close()
 
     # First, get mappings from filenames to sample IDs.
+    global tcga_id_to_fname_dct
     tcga_id_to_fname_dct = {}
     for subfolder in listdir_fullpath('%s/RNAseq' % tcga_folder):
         for fname in listdir_fullpath(subfolder):
@@ -561,33 +590,72 @@ def check_matrix_alignment():
         # Check genes.
         assert np.array_equal(tcga_expr_genes, xeno_expr_genes)
         assert np.array_equal(tcga_drugs, xeno_drugs)
+    return gdsc_expr_samples, tcga_expr_samples, gdsc_expr_genes
+
+def write_gdsc_tissue_by_sample(gdsc_expr_samples):
+    '''
+    Writes out the tissue x sample matrix for GDSC.
+    '''
+    sample_tissue_df = pd.DataFrame(columns=gdsc_expr_samples)
+    f = open('./data/GDSC/RACS_in_cell_lines.tsv', 'r')
+    f.readline()
+    for line in f:
+        line = line.strip().split('\t')
+        cosmic_id, tissue_id = line[1], line[3]
+        if cosmic_id in gdsc_expr_samples:
+            sample_tissue_df.set_value(tissue_id, cosmic_id, 1)
+    f.close()
+    sample_tissue_df = sample_tissue_df.fillna(value=0)
+    sample_tissue_df.to_csv('./data/GDSC/gdsc_tissue_by_sample.csv')
+    
+def write_tcga_tissue_by_sample(tcga_expr_samples):
+    '''
+    Writes out the tissue x sample matrix for TCGA.
+    '''
+    sample_tissue_df = pd.DataFrame(columns=tcga_expr_samples)
+    f = open('%s/drug_response.txt' % tcga_folder, 'r')
+    f.readline() # Skip the header line.
+    for line in f:
+        line = line.strip().split('\t')
+        cancer, sample_id = line[0], line[1]
+        if sample_id not in tcga_id_to_fname_dct:
+            continue
+        fname_id = tcga_id_to_fname_dct[sample_id]
+        if fname_id in tcga_expr_samples:
+            sample_tissue_df.set_value(cancer, fname_id, 1)
+    f.close()
+    sample_tissue_df = sample_tissue_df.fillna(value=0)
+    sample_tissue_df.to_csv('./data/TCGA/tcga_tissue_by_sample.csv')
 
 def main():
     parse_args()
     parse_results_folder()
     generate_directories()
+    
+    # drugs_in_common = write_drug_matrices()
 
-    drugs_in_common = write_drug_matrices()
+    # if args.drug_strat == 'all':
+    #     drugs_in_common = ['all']
 
+    # for drug in drugs_in_common:
+    #     write_pheno_file(drug)
+
+    # command = ('Rscript combat_batch_script.R %s %s' % (results_folder,
+    #     ' '.join(drugs_in_common)))
+    # subprocess.call(command, shell=True)
+
+    # # if args.drug_strat == 'single':
+    # for drug in drugs_in_common:
+    #     plot_stitched_gene_expr(drug, 'before')
+    #     plot_stitched_gene_expr(drug, 'after')
     if args.drug_strat == 'all':
-        drugs_in_common = ['all']
-
-    for drug in drugs_in_common:
-        write_pheno_file(drug)
-
-    command = ('Rscript combat_batch_script.R %s %s' % (results_folder,
-        ' '.join(drugs_in_common)))
-    subprocess.call(command, shell=True)
-
-    if args.drug_strat == 'single':
-        for drug in drugs_in_common:
-            plot_stitched_gene_expr(drug, 'before')
-            plot_stitched_gene_expr(drug, 'after')
-    else:
-        separate_concat_mats()
+        # separate_concat_mats()
         
-    # Sanity checks.
-    check_matrix_alignment()
+        # Sanity checks.
+        gdsc_expr_samples, tcga_expr_samples, gdsc_expr_genes = check_matrix_alignment()
+        build_ppi_network(gdsc_expr_genes)
+        # write_gdsc_tissue_by_sample(gdsc_expr_samples)
+        # write_tcga_tissue_by_sample(tcga_expr_samples)
 
 if __name__ == '__main__':
     main()
