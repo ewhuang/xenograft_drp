@@ -2,7 +2,7 @@
 
 library(gelnet)
 
-change.files <- function() {
+change.files <- function(method_type) {
 
     gdsc_ge = t(read.table('./data/gdsc_tcga/gdsc_expr_postCB.csv', header=TRUE, row.names=1, sep=',',
     check.names=FALSE))
@@ -33,7 +33,17 @@ change.files <- function() {
         good_indices <- which(!is.na(row))
         row <- row[good_indices]
         # print(row)
-        gel <- gelnet.cv(gdsc_ge[good_indices,], row, 5, 5, nFolds=5, P = penalty)
+        # TODO: Change the parameters here in order to reate other methods.
+        if (method_type == 'li') {
+            gel <- gelnet.cv(gdsc_ge[good_indices,], row, 5, 5, nFolds=5, d=rep(1, nrow(penalty)), P = penalty)
+        } else if (method_type == 'nick') {
+            gel <- gelnet.cv(gdsc_ge[good_indices,], row, 5, 5, nFolds=5, d=rep(1e-100, ncol(penalty)), P = diag(nrow(penalty)) + penalty * 0.5)
+        } else if (method_type == 'd0') {
+            gel <- gelnet.cv(gdsc_ge[good_indices,], row, 5, 5, nFolds=5, d=rep(1e-100, nrow(penalty)), P=penalty)
+        } else if (method_type == 'traditional') {
+            gel <- gelnet.cv(gdsc_ge[good_indices,], row, 5, 5, nFolds=5, d=rep(1, nrow(penalty)), P=diag(nrow(penalty)))
+        }
+        
         # Predict the drug response.
         pred <- tcga_ge %*% gel$w + gel$b
         
@@ -41,24 +51,7 @@ change.files <- function() {
         pred_df <- rbind(pred_df, t(pred))
     }
     row.names(pred_df) <- drugs
-    write.csv(pred_df, file='./data/gdsc_tcga/dr_matrices/GDSC_TCGA_gelnet.csv')
-    # gelnet.cv(gdsc_ge, gdsc_dr, nFolds = 10)
-    # apply(gdsc_dr, 1, gelnet.cv, X=gdsc_ge, nFolds=10)
-    # gelnet(gdsc_ge, )
-    
-    # tcga_row = tcga_dr[,3]
-    # tcga_good <- which(!is.na(tcga_row))
-    # tcga_row = as.integer(as.factor(tcga_row[tcga_good]))
-    # # gelnet.lin.obj(gel$w, gel$b, tcga_ge[tcga_good,], tcga_row, gel$l1, gel$l2)
-    # gelnet.lin.obj(gel$w, gel$b, ge_mat[good_indices,], row, gel$l1, gel$l2, P=penalty)
-    
-    # sum(gel$w $*$ ge_mat[good_indices,]) + gel$b
-    # # 882 samples, 13941 genes
-    
-    # # THIS RIGHT HERE
-    # ge_mat[good_indices,] %*% gel$w + gel$b
+    write.csv(pred_df, file=paste('./data/gdsc_tcga/dr_matrices/GDSC_TCGA_gelnet_', method_type, '.csv', sep=''))
 }
 
-# args <- commandArgs(trailingOnly = TRUE)
-# change.files(args[1], args[2])
-change.files()
+change.files('traditional')

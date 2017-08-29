@@ -45,7 +45,7 @@ def build_ppi_network(gdsc_expr_genes):
         ppi_dct[(protein_a, protein_b)] = weight
     f.close()
     
-    # Fille diagonal with 1s.
+    # Fill diagonal with 1s.
     for gene in gdsc_expr_genes:
         ppi_dct[(gene, gene)] = 1
     
@@ -632,30 +632,30 @@ def main():
     parse_results_folder()
     generate_directories()
     
-    # drugs_in_common = write_drug_matrices()
+    drugs_in_common = write_drug_matrices()
 
-    # if args.drug_strat == 'all':
-    #     drugs_in_common = ['all']
-
-    # for drug in drugs_in_common:
-    #     write_pheno_file(drug)
-
-    # command = ('Rscript combat_batch_script.R %s %s' % (results_folder,
-    #     ' '.join(drugs_in_common)))
-    # subprocess.call(command, shell=True)
-
-    # # if args.drug_strat == 'single':
-    # for drug in drugs_in_common:
-    #     plot_stitched_gene_expr(drug, 'before')
-    #     plot_stitched_gene_expr(drug, 'after')
     if args.drug_strat == 'all':
-        # separate_concat_mats()
+        drugs_in_common = ['all']
+
+    for drug in drugs_in_common:
+        write_pheno_file(drug)
+
+    command = ('Rscript combat_batch_script.R %s %s' % (results_folder,
+        ' '.join(drugs_in_common)))
+    subprocess.call(command, shell=True)
+
+    # if args.drug_strat == 'single':
+    for drug in drugs_in_common:
+        plot_stitched_gene_expr(drug, 'before')
+        plot_stitched_gene_expr(drug, 'after')
+    if args.drug_strat == 'all':
+        separate_concat_mats()
         
         # Sanity checks.
         gdsc_expr_samples, tcga_expr_samples, gdsc_expr_genes = check_matrix_alignment()
         build_ppi_network(gdsc_expr_genes)
-        # write_gdsc_tissue_by_sample(gdsc_expr_samples)
-        # write_tcga_tissue_by_sample(tcga_expr_samples)
+        write_gdsc_tissue_by_sample(gdsc_expr_samples)
+        write_tcga_tissue_by_sample(tcga_expr_samples)
 
 if __name__ == '__main__':
     main()
