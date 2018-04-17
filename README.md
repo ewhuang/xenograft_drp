@@ -13,3 +13,35 @@ Drug response prediction with xenograft data.
     ```bash
     python preprocess_batch_effect.py [-h] -d {single,all} [-x {Models,Samples}]
     ```
+    
+3. Preprocess the KEGG pathways for Sparse-Group lasso.
+
+4. Adding tissue types as binary features to the gene by sample matrix.
+
+    ```bash
+    python concatenate_sample_features.py
+    ```
+
+### GelNet
+
+1. Run with different types of objective functions.
+
+    ```bash
+    Rscript gelnet_script.R {li, nick, traditional, d0}
+    ```
+
+### SGL
+
+1. Cluster gene-gene networks.
+
+    ```bash
+    python cluster_networks_sgl.py
+    ```
+    
+### Lasso tissue idea 1.
+
+1. Run lasso on individual tissue types.
+
+    ```bash
+    python lasso_tissue.py
+    ```
