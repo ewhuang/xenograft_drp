@@ -45,3 +45,16 @@ Drug response prediction with xenograft data.
     ```bash
     python lasso_tissue.py
     ```
+
+2. Runs idea 2 for individual tissue types, with a slight modification described in the script.
+
+    ```bash
+    python lasso_tissue_idea_2.py -i [1, 2]
+    ```
+3. The previous script also saves the weights for genes. Analyze these weights and print out the gene sets for each tissue-drug pair.
+
+    ```bash
+    python extract_gene_weights.py
+    ```
+    
+    Outputs ./data/gdsc_tcga/idea_2_lasso_weights/nonzero_gene_lists.txt
