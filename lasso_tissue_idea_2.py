@@ -5,6 +5,7 @@ import itertools
 from multiprocessing import Pool
 import numpy as np
 import pandas as pd
+import pickle
 from sklearn.linear_model import LassoCV, Lasso
 from sklearn.metrics import mean_squared_error
 
@@ -32,7 +33,7 @@ ALL_TISSUE_DRUG_ALPHA_DCT = {'cisplatin': 0.15164939512562223, 'cetuximab': 0.11
 
 def fit_model(*args):
     X_train_tmp, y_train_tmp, X_test_tmp, y_test_tmp, alpha = args[0]
-    reg_model = Lasso(alpha=alpha)
+    reg_model = Lasso(alpha=alpha, random_state=0)
     reg_model.fit(X_train_tmp, y_train_tmp)
     
     y_pred = reg_model.predict(X_test_tmp)
@@ -142,7 +143,7 @@ def main():
         if args.idea == '2':
             train_expr_tissue = train_expr
             train_resp_tissue = train_resp
-
+        
         # Do the same for TCGA.
         tcga_tissue_samples = tcga_tissue.loc[tissue]
         tcga_tissue_samples = tcga_tissue_samples.iloc[tcga_tissue_samples.nonzero()].index.values
@@ -164,9 +165,13 @@ def main():
                 X_train_tmp = train_expr.values.T[not_nan_ind,:]
                 
             # Use the alpha learned from training on all samples.
-            clf = Lasso(alpha=drug_alpha_dct[drug])
+            clf = Lasso(alpha=drug_alpha_dct[drug], random_state=0)
             clf.fit(X_train_tmp, y_train_tmp)
-        
+            
+            # Write out the tissue lasso weights.
+            with open('./data/gdsc_tcga/idea_2_lasso_weights/%s_%s' % (tissue, drug), 'wb') as fp:
+                pickle.dump(clf.coef_, fp)
+            
             # Predict on the test values.    
             y_test_hat_tmp = clf.predict(test_expr_tissue.values.T)
             for i, ic50 in enumerate(y_test_hat_tmp):
